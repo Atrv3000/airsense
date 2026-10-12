@@ -17,4 +17,5 @@ urlpatterns = [
     path('api/v1/aqi/', include('aqi_engine.urls')),
     path('api/v1/ml/', include('ml_engine.urls')),
     path('api/v1/gis/', include('spatial_gis.urls')),
+    path('api/v1/alerts/', include('alerts.urls')),
 ]

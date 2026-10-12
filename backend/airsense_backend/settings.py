@@ -43,6 +43,7 @@ INSTALLED_APPS = [
     'aqi_engine',
     'ml_engine',
     'spatial_gis',
+    'alerts',
 ]
 
 MIDDLEWARE = [
