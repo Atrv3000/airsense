@@ -1,0 +1,12 @@
+[run]
+source = core,ingestion,aqi_engine,ml_engine,spatial_gis,alerts
+omit =
+    */migrations/*
+    */tests.py
+    */apps.py
+    */admin.py
+    airsense_backend/*
+
+[report]
+show_missing = True
+precision = 1
