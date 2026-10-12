@@ -1,5 +1,7 @@
 from django.urls import path
+from .views import ForecastAPIView, ModelMetricsAPIView
 
 urlpatterns = [
-    # Will be populated in Phase 5
+    path('predict/', ForecastAPIView.as_view(), name='ml-predict'),
+    path('models/', ModelMetricsAPIView.as_view(), name='ml-models'),
 ]

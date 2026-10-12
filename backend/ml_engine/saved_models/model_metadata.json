@@ -1,0 +1,55 @@
+{
+    "champion_model": "Ridge_Linear",
+    "trained_samples": 556,
+    "test_samples": 139,
+    "feature_columns": [
+        "hour_sin",
+        "hour_cos",
+        "day_of_week",
+        "is_weekend",
+        "temperature",
+        "humidity",
+        "wind_speed",
+        "u_wind",
+        "v_wind",
+        "pm25",
+        "pm10",
+        "no2",
+        "so2",
+        "co",
+        "o3",
+        "aqi_lag_1",
+        "aqi_lag_2",
+        "aqi_lag_3",
+        "aqi_lag_24",
+        "aqi_roll_mean_6h",
+        "aqi_roll_mean_24h"
+    ],
+    "metrics_comparison": {
+        "Baseline_Persistence": {
+            "MAE": 24.61,
+            "RMSE": 47.13,
+            "R2_Score": 0.3446
+        },
+        "Ridge_Linear": {
+            "MAE": 21.52,
+            "RMSE": 36.48,
+            "R2_Score": 0.6073
+        },
+        "Random_Forest": {
+            "MAE": 29.48,
+            "RMSE": 39.25,
+            "R2_Score": 0.5454
+        },
+        "XGBoost": {
+            "MAE": 30.54,
+            "RMSE": 41.38,
+            "R2_Score": 0.4948
+        }
+    },
+    "champion_metrics": {
+        "MAE": 21.52,
+        "RMSE": 36.48,
+        "R2_Score": 0.6073
+    }
+}
