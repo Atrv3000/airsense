@@ -9,6 +9,7 @@ from .air_quality_client import AirQualityClient
 from .weather_client import WeatherClient
 from .preprocessor import DataPreprocessor
 from .station_seeder import seed_mumbai_stations
+from aqi_engine.services.aqi_service import AQIService
 
 logger = logging.getLogger(__name__)
 
@@ -95,6 +96,9 @@ class DataPipeline:
                     recorded_at=dt_aware,
                     defaults=defaults_payload
                 )
+
+                # Calculate CPCB NAQI immediately
+                AQIService.calculate_for_measurement(obj)
 
                 if created:
                     created_count += 1
