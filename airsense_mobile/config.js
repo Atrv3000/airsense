@@ -1,9 +1,31 @@
 // Central API configuration for the AirSense backend
-// 10.0.2.2 is the Expo Go / Android emulator alias for your computer's localhost
-// Change this to your computer's actual LAN IP when testing on a real phone
-// e.g., 'http://192.168.1.5:8000'
+import Constants from 'expo-constants';
+import { Platform } from 'react-native';
 
-export const API_BASE_URL = 'http://10.0.2.2:8000';
+// Helper to determine the best backend host dynamically:
+// 1. If running inside Expo Go / dev client, Constants.expoConfig?.hostUri has your computer's LAN IP (e.g. 192.168.0.100:8081)
+// 2. If running on Web, use localhost (127.0.0.1)
+// 3. Fallback to computer's Wi-Fi LAN IP (192.168.0.100) so physical phones can connect over Wi-Fi
+function getApiBaseUrl() {
+  const hostUri = Constants.expoConfig?.hostUri;
+  if (hostUri) {
+    const ip = hostUri.split(':')[0];
+    if (ip) {
+      return `http://${ip}:8000`;
+    }
+  }
+
+  if (Platform.OS === 'web') {
+    return 'http://127.0.0.1:8000';
+  }
+
+  // Your computer's current Wi-Fi LAN IP
+  return 'http://192.168.0.100:8000';
+}
+
+export const API_BASE_URL = getApiBaseUrl();
+
+console.log('[AirSense] Connecting to Backend at:', API_BASE_URL);
 
 export const ENDPOINTS = {
   health:        `${API_BASE_URL}/api/v1/health/`,
