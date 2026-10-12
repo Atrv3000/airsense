@@ -28,7 +28,7 @@ class DataPipeline:
 
         # 1. Fetch Pollutants & Weather in parallel
         aq_data = AirQualityClient.fetch_station_air_quality(
-            station.latitude, station.longitude, past_days=past_days, forecast_days=forecast_days
+            station.latitude, station.longitude, past_days=past_days, forecast_days=forecast_days, station_id_code=station.station_id
         )
         weather_data = WeatherClient.fetch_weather_for_coords(
             station.latitude, station.longitude, past_days=past_days
