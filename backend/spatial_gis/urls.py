@@ -1,5 +1,7 @@
 from django.urls import path
+from .views import HotspotsGeoJSONAPIView, FullGridGeoJSONAPIView
 
 urlpatterns = [
-    # Will be populated in Phase 6 & 7
+    path('hotspots/', HotspotsGeoJSONAPIView.as_view(), name='gis-hotspots'),
+    path('grid/', FullGridGeoJSONAPIView.as_view(), name='gis-full-grid'),
 ]

@@ -1,3 +1,104 @@
 from django.test import TestCase
+from rest_framework.test import APIClient
+from rest_framework import status
+import numpy as np
+from datetime import datetime
+from zoneinfo import ZoneInfo
+from core.models import MonitoringStation
+from ingestion.models import RawMeasurement
+from aqi_engine.models import AQIRecord
+from aqi_engine.services.aqi_service import AQIService
+from spatial_gis.services.idw_interpolator import IDWInterpolator
+from spatial_gis.services.hotspot_detector import HotspotDetector
 
-# Create your tests here.
+class SpatialGISIDWTestCase(TestCase):
+    def test_haversine_distance_calculation(self):
+        # BKC to Colaba: ~18.5 km
+        lats1 = np.array([19.0657])
+        lons1 = np.array([72.8687])
+        lats2 = np.array([18.9067])
+        lons2 = np.array([72.8147])
+
+        dist = IDWInterpolator.haversine_distance_matrix(lats1, lons1, lats2, lons2)
+        self.assertEqual(dist.shape, (1, 1))
+        # Great circle distance should be between 17 and 20 km
+        self.assertTrue(17.0 <= dist[0, 0] <= 20.0)
+
+        # Distance to self must be 0
+        self_dist = IDWInterpolator.haversine_distance_matrix(lats1, lons1, lats1, lons1)
+        self.assertAlmostEqual(self_dist[0, 0], 0.0, places=4)
+
+    def test_mumbai_grid_bounds(self):
+        lats, lons, lat_step, lon_step = IDWInterpolator.generate_mumbai_grid(resolution=15)
+        self.assertEqual(len(lats), 15 * 15)
+        self.assertEqual(len(lons), 15 * 15)
+        self.assertGreaterEqual(lats.min(), 18.89)
+        self.assertLessEqual(lats.max(), 19.30)
+        self.assertGreaterEqual(lons.min(), 72.75)
+        self.assertLessEqual(lons.max(), 73.10)
+
+    def test_idw_constant_field_identity(self):
+        # If all stations have AQI = 150.0, every interpolated point on the grid must be 150.0
+        dummy_stations = [
+            {'latitude': 19.0657, 'longitude': 72.8687, 'aqi': 150.0},
+            {'latitude': 18.9067, 'longitude': 72.8147, 'aqi': 150.0},
+            {'latitude': 19.2291, 'longitude': 72.8617, 'aqi': 150.0},
+        ]
+        grid = IDWInterpolator.interpolate_grid(dummy_stations, resolution=10)
+        for pt in grid:
+            self.assertEqual(pt['interpolated_aqi'], 150.0)
+
+    def test_hotspot_detector_geojson_format(self):
+        stations = [
+            {'latitude': 19.0522, 'longitude': 72.8995, 'aqi': 350.0},  # Chembur: Very Poor Hotspot
+            {'latitude': 18.9067, 'longitude': 72.8147, 'aqi': 45.0},   # Colaba: Good
+        ]
+        geojson = HotspotDetector.detect_hotspots(stations, threshold=200.0, resolution=15)
+        self.assertEqual(geojson["type"], "FeatureCollection")
+        self.assertIn("features", geojson)
+        self.assertIn("metadata", geojson)
+        self.assertGreater(geojson["metadata"]["hotspot_cells_count"], 0)
+
+        # Check that coordinates are [lon, lat] per RFC 7946
+        for feature in geojson["features"]:
+            geom = feature["geometry"]
+            if geom["type"] == "Point":
+                lon, lat = geom["coordinates"]
+                self.assertTrue(72.75 <= lon <= 73.10)
+                self.assertTrue(18.89 <= lat <= 19.30)
+
+class SpatialGISAPITestCase(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.tz = ZoneInfo("Asia/Kolkata")
+        self.station1 = MonitoringStation.objects.create(
+            station_id="TEST_HOTSPOT_1",
+            name="Test Hotspot Station",
+            latitude=19.0522,
+            longitude=72.8995,
+            zone_type="INDUSTRIAL"
+        )
+        now = datetime.now(self.tz)
+        raw = RawMeasurement.objects.create(
+            station=self.station1,
+            recorded_at=now,
+            pm25=150.0,  # Elevated PM2.5
+            pm10=280.0,
+            no2=50.0,
+            so2=20.0,
+            co=1.5,
+            o3=60.0
+        )
+        AQIService.calculate_for_measurement(raw)
+
+    def test_hotspots_api_endpoint(self):
+        response = self.client.get('/api/v1/gis/hotspots/?threshold=150&resolution=15')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data.get("type"), "FeatureCollection")
+        self.assertIn("features", response.data)
+
+    def test_full_grid_api_endpoint(self):
+        response = self.client.get('/api/v1/gis/grid/?resolution=12')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data.get("type"), "FeatureCollection")
+        self.assertEqual(len(response.data.get("features", [])), 144)  # 12x12 = 144 points
