@@ -135,3 +135,6 @@ CORS_ALLOW_CREDENTIALS = True
 # ML Models Directory
 ML_MODELS_DIR = BASE_DIR / 'ml_engine' / 'saved_models'
 os.makedirs(ML_MODELS_DIR, exist_ok=True)
+
+# Allow WebView embedding for mobile app
+X_FRAME_OPTIONS = 'ALLOWALL'
