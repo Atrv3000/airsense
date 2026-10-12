@@ -1,0 +1,50 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database Service
+  db:
+    image: postgres:16-alpine
+    container_name: airsense_postgres
+    restart: always
+    environment:
+      POSTGRES_DB: airsense_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-abcd1234}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d airsense_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Django Backend API & GIS Engine
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: airsense_backend
+    restart: always
+    command: >
+      sh -c "python manage.py migrate &&
+             python manage.py seed_stations &&
+             gunicorn airsense_backend.wsgi:application --bind 0.0.0.0:8000 --workers 3 --timeout 120"
+    ports:
+      - "8000:8000"
+    environment:
+      - DEBUG=False
+      - SECRET_KEY=${SECRET_KEY:-airsense_prod_insecure_key_change_in_production}
+      - DB_NAME=airsense_db
+      - DB_USER=postgres
+      - DB_PASSWORD=${DB_PASSWORD:-abcd1234}
+      - DB_HOST=db
+      - DB_PORT=5432
+      - ALLOWED_HOSTS=*
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
