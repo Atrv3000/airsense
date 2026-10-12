@@ -1,0 +1,23 @@
+# Django & Web API Framework
+Django>=5.0,<6.2
+djangorestframework>=3.15.0
+django-cors-headers>=4.3.0
+
+# Database Connectivity (PostgreSQL 16/18)
+psycopg[binary]>=3.2.0
+
+# Environment Variables & Configuration
+python-dotenv>=1.0.0
+
+# Network & HTTP Ingestion
+requests>=2.31.0
+
+# Data Science & Preprocessing
+numpy>=1.26.0
+pandas>=2.2.0
+scipy>=1.12.0
+
+# Machine Learning & Serialization
+scikit-learn>=1.4.0
+xgboost>=2.0.0
+joblib>=1.3.0
