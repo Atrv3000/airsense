@@ -1,0 +1,409 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AirSense — Mumbai GIS Air Quality & Hotspot Map</title>
+
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+        }
+
+        body {
+            background-color: #0f172a;
+            color: #f8fafc;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        header {
+            background: rgba(15, 23, 42, 0.95);
+            backdrop-filter: blur(10px);
+            padding: 12px 24px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid #1e293b;
+            z-index: 1000;
+        }
+
+        .brand-title {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .brand-title h1 {
+            font-size: 1.25rem;
+            font-weight: 700;
+            color: #38bdf8;
+            letter-spacing: -0.5px;
+        }
+
+        .brand-title .badge {
+            background: #0284c7;
+            color: #fff;
+            font-size: 0.7rem;
+            padding: 3px 8px;
+            border-radius: 9999px;
+            font-weight: 600;
+        }
+
+        .stats-bar {
+            display: flex;
+            gap: 16px;
+        }
+
+        .stat-pill {
+            background: #1e293b;
+            padding: 6px 14px;
+            border-radius: 8px;
+            font-size: 0.8rem;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            border: 1px solid #334155;
+        }
+
+        .stat-pill .val {
+            font-weight: 700;
+            color: #38bdf8;
+        }
+
+        #map {
+            flex: 1;
+            width: 100%;
+            height: calc(100vh - 65px);
+            z-index: 1;
+        }
+
+        /* Custom Leaflet Marker Badges */
+        .aqi-marker-pin {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            width: 44px;
+            height: 44px;
+            border-radius: 50%;
+            color: #fff;
+            font-weight: 800;
+            font-size: 0.82rem;
+            box-shadow: 0 4px 14px rgba(0,0,0,0.4);
+            border: 3px solid #ffffff;
+            cursor: pointer;
+            transition: transform 0.2s ease;
+        }
+
+        .aqi-marker-pin:hover {
+            transform: scale(1.15);
+        }
+
+        /* Legend */
+        .legend-card {
+            background: rgba(15, 23, 42, 0.92);
+            backdrop-filter: blur(8px);
+            padding: 12px 16px;
+            border-radius: 10px;
+            color: #f1f5f9;
+            font-size: 0.78rem;
+            border: 1px solid #334155;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+            max-width: 240px;
+        }
+
+        .legend-title {
+            font-weight: 700;
+            margin-bottom: 8px;
+            font-size: 0.82rem;
+            color: #94a3b8;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .legend-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 4px;
+        }
+
+        .color-dot {
+            width: 14px;
+            height: 14px;
+            border-radius: 3px;
+        }
+
+        /* Popup Styling */
+        .leaflet-popup-content-wrapper {
+            background: #1e293b !important;
+            color: #f8fafc !important;
+            border-radius: 12px !important;
+            padding: 4px !important;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.6) !important;
+            border: 1px solid #334155;
+        }
+
+        .leaflet-popup-tip {
+            background: #1e293b !important;
+        }
+
+        .popup-box {
+            padding: 10px 12px;
+            font-size: 0.85rem;
+            min-width: 220px;
+        }
+
+        .popup-box h3 {
+            font-size: 1rem;
+            font-weight: 700;
+            color: #f1f5f9;
+            margin-bottom: 4px;
+        }
+
+        .popup-badge {
+            display: inline-block;
+            padding: 3px 10px;
+            border-radius: 6px;
+            font-weight: 700;
+            font-size: 0.8rem;
+            color: #fff;
+            margin: 6px 0;
+        }
+
+        .popup-metrics {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 6px;
+            margin: 8px 0;
+            background: #0f172a;
+            padding: 8px;
+            border-radius: 8px;
+        }
+
+        .metric-item {
+            font-size: 0.75rem;
+            color: #94a3b8;
+        }
+
+        .metric-item span {
+            display: block;
+            font-weight: 600;
+            color: #f8fafc;
+            font-size: 0.85rem;
+        }
+
+        .forecast-strip {
+            margin-top: 8px;
+            border-top: 1px solid #334155;
+            padding-top: 6px;
+        }
+
+        .forecast-title {
+            font-size: 0.72rem;
+            color: #38bdf8;
+            font-weight: 700;
+            text-transform: uppercase;
+            margin-bottom: 4px;
+        }
+
+        .forecast-chips {
+            display: flex;
+            gap: 4px;
+            overflow-x: auto;
+        }
+
+        .chip {
+            background: #0f172a;
+            padding: 4px 6px;
+            border-radius: 6px;
+            font-size: 0.7rem;
+            text-align: center;
+            border: 1px solid #334155;
+            min-width: 48px;
+        }
+    </style>
+</head>
+<body>
+
+    <header>
+        <div class="brand-title">
+            <h1>AirSense Mumbai</h1>
+            <span class="badge">GIS Hotspots & Stations</span>
+        </div>
+        <div class="stats-bar">
+            <div class="stat-pill">
+                <span>Active Stations:</span>
+                <span class="val" id="stat-stations">Loading...</span>
+            </div>
+            <div class="stat-pill">
+                <span>City Average:</span>
+                <span class="val" id="stat-city-aqi">Loading...</span>
+            </div>
+            <div class="stat-pill">
+                <span>Hotspots Detected:</span>
+                <span class="val" id="stat-hotspots" style="color: #f87171;">Loading...</span>
+            </div>
+        </div>
+    </header>
+
+    <div id="map"></div>
+
+    <!-- Leaflet JS -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+    <script>
+        // 1. Initialize Map centered on Mumbai
+        const map = L.map('map', {
+            center: [19.0760, 72.8777],
+            zoom: 11,
+            zoomControl: true
+        });
+
+        // 2. Add Dark CartoDB Basemap Tiles
+        L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/">CARTO</a>',
+            subdomains: 'abcd',
+            maxZoom: 19
+        }).addTo(map);
+
+        // Feature Groups for Toggling
+        const stationsLayer = L.featureGroup().addTo(map);
+        const hotspotsLayer = L.featureGroup().addTo(map);
+
+        // 3. Fetch Map Layers from Backend API
+        fetch('/api/v1/gis/map-layers/')
+            .then(res => res.json())
+            .then(data => {
+                const stations = data.stations_geojson.features || [];
+                const hotspots = data.hotspots_geojson.features || [];
+                const legend = data.legend || [];
+
+                // Update Header Stats
+                document.getElementById('stat-stations').innerText = stations.length;
+                document.getElementById('stat-hotspots').innerText = data.hotspots_geojson.metadata ? data.hotspots_geojson.metadata.hotspot_cells_count : 0;
+
+                let aqiSum = 0;
+                let validCount = 0;
+
+                // Render Stations
+                stations.forEach(st => {
+                    const coords = st.geometry.coordinates; // [lon, lat]
+                    const p = st.properties;
+                    const lat = coords[1];
+                    const lon = coords[0];
+
+                    if (p.current_aqi) {
+                        aqiSum += p.current_aqi;
+                        validCount++;
+                    }
+
+                    // Custom HTML Marker with AQI score inside
+                    const customIcon = L.divIcon({
+                        className: 'custom-div-icon',
+                        html: `<div class="aqi-marker-pin" style="background-color: ${p.color_hex};">${Math.round(p.current_aqi)}</div>`,
+                        iconSize: [44, 44],
+                        iconAnchor: [22, 22]
+                    });
+
+                    // Build 6h Forecast Chips HTML
+                    let forecastHtml = '';
+                    if (p.forecast_24h && p.forecast_24h.length > 0) {
+                        const next6 = p.forecast_24h.slice(0, 4);
+                        forecastHtml = `
+                            <div class="forecast-strip">
+                                <div class="forecast-title">ML Forecast (Next 4h)</div>
+                                <div class="forecast-chips">
+                                    ${next6.map(fc => `
+                                        <div class="chip">
+                                            <div style="color: #94a3b8;">+${fc.step_ahead_hours}h</div>
+                                            <div style="font-weight: 700; color: ${fc.color_hex};">${Math.round(fc.predicted_aqi)}</div>
+                                        </div>
+                                    `).join('')}
+                                </div>
+                            </div>
+                        `;
+                    }
+
+                    const popupContent = `
+                        <div class="popup-box">
+                            <h3>${p.name}</h3>
+                            <div class="popup-badge" style="background-color: ${p.color_hex};">
+                                AQI: ${p.current_aqi} (${p.category})
+                            </div>
+                            <div class="popup-metrics">
+                                <div class="metric-item">Prominent: <span>${p.prominent_pollutant || 'PM2.5'}</span></div>
+                                <div class="metric-item">PM2.5: <span>${p.pm25 || '--'} µg/m³</span></div>
+                                <div class="metric-item">Temp: <span>${p.temperature ? p.temperature + ' °C' : '--'}</span></div>
+                                <div class="metric-item">Wind: <span>${p.wind_speed ? p.wind_speed + ' km/h' : '--'}</span></div>
+                            </div>
+                            ${forecastHtml}
+                        </div>
+                    `;
+
+                    L.marker([lat, lon], { icon: customIcon })
+                        .bindPopup(popupContent)
+                        .addTo(stationsLayer);
+                });
+
+                if (validCount > 0) {
+                    document.getElementById('stat-city-aqi').innerText = Math.round(aqiSum / validCount);
+                }
+
+                // Render Hotspot Polygons
+                hotspots.forEach(hs => {
+                    if (hs.geometry.type === 'Polygon') {
+                        const p = hs.properties;
+                        // Leaflet expects [[lat, lon], [lat, lon], ...]
+                        const latLngs = hs.geometry.coordinates[0].map(c => [c[1], c[0]]);
+
+                        L.polygon(latLngs, {
+                            color: p.stroke_color || '#ff0000',
+                            weight: 1,
+                            fillColor: p.color_hex || '#ff0000',
+                            fillOpacity: p.fill_opacity || 0.25
+                        }).bindTooltip(`Hotspot: AQI ${p.interpolated_aqi} (${p.category})`).addTo(hotspotsLayer);
+                    }
+                });
+
+                // Add Layer Control
+                L.control.layers(null, {
+                    "Monitoring Stations (Live & Forecast)": stationsLayer,
+                    "IDW Hotspot Zones": hotspotsLayer
+                }, { position: 'topright', collapsed: false }).addTo(map);
+
+                // Add Legend Control
+                const legendControl = L.control({ position: 'bottomright' });
+                legendControl.onAdd = function() {
+                    const div = L.DomUtil.create('div', 'legend-card');
+                    div.innerHTML = `<div class="legend-title">CPCB NAQI Index</div>`;
+                    legend.forEach(item => {
+                        div.innerHTML += `
+                            <div class="legend-row">
+                                <span class="color-dot" style="background: ${item.color_hex}"></span>
+                                <span>${item.category} (${item.range})</span>
+                            </div>
+                        `;
+                    });
+                    return div;
+                };
+                legendControl.addTo(map);
+            })
+            .catch(err => {
+                console.error("Failed to load map layers:", err);
+            });
+    </script>
+</body>
+</html>

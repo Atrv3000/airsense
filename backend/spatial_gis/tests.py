@@ -38,7 +38,6 @@ class SpatialGISIDWTestCase(TestCase):
         self.assertLessEqual(lons.max(), 73.10)
 
     def test_idw_constant_field_identity(self):
-        # If all stations have AQI = 150.0, every interpolated point on the grid must be 150.0
         dummy_stations = [
             {'latitude': 19.0657, 'longitude': 72.8687, 'aqi': 150.0},
             {'latitude': 18.9067, 'longitude': 72.8147, 'aqi': 150.0},
@@ -50,8 +49,8 @@ class SpatialGISIDWTestCase(TestCase):
 
     def test_hotspot_detector_geojson_format(self):
         stations = [
-            {'latitude': 19.0522, 'longitude': 72.8995, 'aqi': 350.0},  # Chembur: Very Poor Hotspot
-            {'latitude': 18.9067, 'longitude': 72.8147, 'aqi': 45.0},   # Colaba: Good
+            {'latitude': 19.0522, 'longitude': 72.8995, 'aqi': 350.0},
+            {'latitude': 18.9067, 'longitude': 72.8147, 'aqi': 45.0},
         ]
         geojson = HotspotDetector.detect_hotspots(stations, threshold=200.0, resolution=15)
         self.assertEqual(geojson["type"], "FeatureCollection")
@@ -59,7 +58,6 @@ class SpatialGISIDWTestCase(TestCase):
         self.assertIn("metadata", geojson)
         self.assertGreater(geojson["metadata"]["hotspot_cells_count"], 0)
 
-        # Check that coordinates are [lon, lat] per RFC 7946
         for feature in geojson["features"]:
             geom = feature["geometry"]
             if geom["type"] == "Point":
@@ -82,7 +80,7 @@ class SpatialGISAPITestCase(TestCase):
         raw = RawMeasurement.objects.create(
             station=self.station1,
             recorded_at=now,
-            pm25=150.0,  # Elevated PM2.5
+            pm25=150.0,
             pm10=280.0,
             no2=50.0,
             so2=20.0,
@@ -101,4 +99,18 @@ class SpatialGISAPITestCase(TestCase):
         response = self.client.get('/api/v1/gis/grid/?resolution=12')
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data.get("type"), "FeatureCollection")
-        self.assertEqual(len(response.data.get("features", [])), 144)  # 12x12 = 144 points
+        self.assertEqual(len(response.data.get("features", [])), 144)
+
+    def test_unified_map_layers_api(self):
+        response = self.client.get('/api/v1/gis/map-layers/?threshold=150')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIn("stations_geojson", response.data)
+        self.assertIn("hotspots_geojson", response.data)
+        self.assertIn("map_config", response.data)
+        self.assertIn("legend", response.data)
+
+    def test_interactive_map_html_view(self):
+        response = self.client.get('/map/')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIn(b'AirSense Mumbai', response.content)
+        self.assertIn(b'leaflet.js', response.content)

@@ -1,9 +1,11 @@
+from django.shortcuts import render
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from core.models import MonitoringStation
 from aqi_engine.models import AQIRecord
 from .services.hotspot_detector import HotspotDetector
+from .services.map_layer_service import MapLayerService
 
 def get_latest_station_readings():
     """
@@ -25,6 +27,22 @@ def get_latest_station_readings():
 
     return stations_data
 
+class UnifiedMapLayersAPIView(APIView):
+    """
+    Consolidated GIS endpoint for mobile & web clients:
+    Returns station markers (with current AQI & 24h predictions),
+    IDW hotspot polygons/points, and CPCB legend metadata in a single request.
+    """
+    def get(self, request):
+        threshold_param = request.query_params.get('threshold', 200.0)
+        try:
+            threshold = float(threshold_param)
+        except ValueError:
+            threshold = 200.0
+
+        layers = MapLayerService.get_unified_map_layers(hotspot_threshold=threshold)
+        return Response(layers, status=status.HTTP_200_OK)
+
 class HotspotsGeoJSONAPIView(APIView):
     """
     Returns detected air pollution hotspots across Mumbai as a standard GeoJSON FeatureCollection.
@@ -43,7 +61,7 @@ class HotspotsGeoJSONAPIView(APIView):
 
         try:
             resolution = int(resolution_param)
-            resolution = max(10, min(50, resolution))  # Clamp between 10 and 50 for safety
+            resolution = max(10, min(50, resolution))
         except ValueError:
             resolution = 25
 
@@ -87,3 +105,9 @@ class FullGridGeoJSONAPIView(APIView):
             resolution=resolution
         )
         return Response(geojson, status=status.HTTP_200_OK)
+
+def interactive_map_view(request):
+    """
+    Renders the interactive Leaflet GIS map preview for web browser testing and viva demos.
+    """
+    return render(request, 'spatial_gis/mumbai_map.html')
