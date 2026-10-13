@@ -1,9 +1,9 @@
 /**
  * Tab 3: Forecast & Analytics Screen
  * Redesigned for production SaaS: clean typography, clear model metrics table,
- * responsive multi-step forecast strip, and zero emojis.
+ * dynamic station selection from backend, multi-horizon forecast strip, and zero emojis.
  */
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View, Text, StyleSheet, ScrollView,
   Dimensions, TouchableOpacity, RefreshControl
@@ -17,14 +17,6 @@ import { ENDPOINTS, THEME, CPCB_COLORS } from '../config';
 const { width: SCREEN_W } = Dimensions.get('window');
 const CHART_WIDTH = SCREEN_W - 32;
 
-const STATIONS = [
-  { id: 'MUM_BKC',      label: 'BKC' },
-  { id: 'MUM_COLABA',   label: 'Colaba' },
-  { id: 'MUM_CHEMBUR',  label: 'Chembur' },
-  { id: 'MUM_WORLI',    label: 'Worli' },
-  { id: 'MUM_KURLA',    label: 'Kurla' },
-];
-
 const CHART_CONFIG = {
   backgroundGradientFrom: THEME.surface,
   backgroundGradientTo:   THEME.surface,
@@ -37,14 +29,25 @@ const CHART_CONFIG = {
 };
 
 export default function ForecastScreen() {
-  const [selectedStation, setSelectedStation] = useState('MUM_BKC');
+  const stationsFetch = useFetch(ENDPOINTS.stations);
+  const stationList = Array.isArray(stationsFetch.data)
+    ? stationsFetch.data
+    : (stationsFetch.data?.results || stationsFetch.data?.stations || []);
+
+  const [selectedStation, setSelectedStation] = useState(null);
   const [refreshing, setRefreshing] = useState(false);
 
-  // Live real-time clock
-  const [currentTime, setCurrentTime] = useState(new Date());
+  // Set default station once stations are loaded
+  useEffect(() => {
+    if (stationList.length > 0 && !selectedStation) {
+      setSelectedStation(stationList[0].station_id || stationList[0].id);
+    }
+  }, [stationList, selectedStation]);
 
-  React.useEffect(() => {
-    const timer = setInterval(() => setCurrentTime(new Date()), 1000);
+  // Update clock every minute instead of every second to conserve CPU/battery
+  const [currentTime, setCurrentTime] = useState(new Date());
+  useEffect(() => {
+    const timer = setInterval(() => setCurrentTime(new Date()), 60000);
     return () => clearInterval(timer);
   }, []);
 
@@ -61,38 +64,58 @@ export default function ForecastScreen() {
     hour12: true,
   });
 
-  const histUrl = `${ENDPOINTS.historicalAqi}?station_id=${selectedStation}&limit=24`;
-  const predUrl = `${ENDPOINTS.predict}?station_id=${selectedStation}&hours=24`;
+  const currentStationId = selectedStation || (stationList[0]?.station_id || 'OPENAQ_6927');
+
+  const histUrl = `${ENDPOINTS.historicalAqi}?station_id=${currentStationId}&limit=24`;
+  const predUrl = `${ENDPOINTS.predict}?station_id=${currentStationId}&hours=24`;
   const metricsUrl = ENDPOINTS.modelMetrics;
 
-  const hist  = useFetch(histUrl);
-  const pred  = useFetch(predUrl);
+  const hist  = useFetch(currentStationId ? histUrl : null);
+  const pred  = useFetch(currentStationId ? predUrl : null);
   const model = useFetch(metricsUrl);
 
   const onRefresh = async () => {
     setRefreshing(true);
-    await Promise.all([hist.refetch(), pred.refetch(), model.refetch()]);
+    await Promise.all([stationsFetch.refetch(), hist.refetch(), pred.refetch(), model.refetch()]);
     setRefreshing(false);
   };
 
-  // Historical data series
+  // Historical data series: evenly sample 7-8 points across 24h so labels.length === data.length
   const histData = hist.data?.history?.filter(r => r.overall_aqi != null) || [];
-  const histValues = histData.map(r => r.overall_aqi);
+  const histStep = Math.max(1, Math.floor(histData.length / 7));
+  const sampledHist = histData.length > 7
+    ? histData.filter((_, i) => i % histStep === 0 || i === histData.length - 1).slice(0, 8)
+    : histData;
+  const histValues = sampledHist.map(r => Math.round(r.overall_aqi));
+  const histLabels = sampledHist.map(r => {
+    const d = new Date(r.recorded_at);
+    return `${d.getHours()}:00`;
+  });
   const histChartData = histValues.length > 1 ? {
-    labels: histData.filter((_, i) => i % 6 === 0).map(r => {
-      const d = new Date(r.recorded_at);
-      return `${d.getHours()}:00`;
-    }),
+    labels: histLabels,
     datasets: [{ data: histValues, strokeWidth: 2 }]
   } : null;
 
-  // Forecast data series
-  const forecasts = pred.data?.forecasts || [];
-  const predValues = forecasts.map(f => f.predicted_aqi);
+  // Forecast data series: deduplicate by horizon and evenly sample 7-8 points
+  const rawForecasts = pred.data?.forecasts || [];
+  const seenHorizons = new Set();
+  const forecasts = rawForecasts.filter(f => {
+    if (seenHorizons.has(f.step_ahead_hours)) return false;
+    seenHorizons.add(f.step_ahead_hours);
+    return true;
+  });
+
+  const predStep = Math.max(1, Math.floor(forecasts.length / 7));
+  const sampledForecasts = forecasts.length > 7
+    ? forecasts.filter((_, i) => i % predStep === 0 || i === forecasts.length - 1).slice(0, 8)
+    : forecasts;
+  const predValues = sampledForecasts.map(f => Math.round(f.predicted_aqi));
+  const predLabels = sampledForecasts.map(f => `+${f.step_ahead_hours}h`);
+
   const predChartData = predValues.length > 1 ? {
-    labels: forecasts.filter((_, i) => i % 6 === 0).map(f => `+${f.step_ahead_hours}h`),
+    labels: predLabels,
     datasets: [
-      { data: predValues, strokeWidth: 2, color: (o=1) => `rgba(56, 189, 248, ${o})` },
+      { data: predValues, strokeWidth: 2, color: (o = 1) => `rgba(56, 189, 248, ${o})` },
     ]
   } : null;
 
@@ -111,7 +134,7 @@ export default function ForecastScreen() {
           />
         }
       >
-        {/* Header Title with Real Date & Clock */}
+        {/* Header Title with Real Date & Minute Clock */}
         <View style={styles.headerBar}>
           <View>
             <Text style={styles.headerSubtitle}>{formattedDate}</Text>
@@ -123,36 +146,39 @@ export default function ForecastScreen() {
           </View>
         </View>
 
-        {/* Station Filter Tabs */}
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.chipRow}
-        >
-          {STATIONS.map(s => {
-            const active = selectedStation === s.id;
-            return (
-              <TouchableOpacity
-                key={s.id}
-                style={[styles.chip, active && styles.chipActive]}
-                onPress={() => setSelectedStation(s.id)}
-                activeOpacity={0.7}
-              >
-                <Text style={[styles.chipText, active && styles.chipTextActive]}>
-                  {s.label}
-                </Text>
-              </TouchableOpacity>
-            );
-          })}
-        </ScrollView>
+        {/* Dynamic Station Filter Tabs */}
+        {stationList.length > 0 && (
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.chipRow}
+          >
+            {stationList.map(s => {
+              const sId = s.station_id || s.id;
+              const active = currentStationId === sId;
+              return (
+                <TouchableOpacity
+                  key={sId}
+                  style={[styles.chip, active && styles.chipActive]}
+                  onPress={() => setSelectedStation(sId)}
+                  activeOpacity={0.7}
+                >
+                  <Text style={[styles.chipText, active && styles.chipTextActive]}>
+                    {s.name || sId}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
+        )}
 
         {/* 24-Hour ML Forecast Section */}
         <SectionHeader
           title="Predicted 24h Trend"
-          subtitle={`Autonomous inference via ${pred.data?.model_used || 'Champion Model'}`}
+          subtitle={`Forecast horizon via ${pred.data?.model_used || 'Precomputed Model'}`}
         />
         {pred.loading ? (
-          <View style={styles.chartPlaceholder}><LoadingCard message="Running inference pipeline..." /></View>
+          <View style={styles.chartPlaceholder}><LoadingCard message="Loading forecast horizon..." /></View>
         ) : pred.error ? (
           <ErrorCard message={pred.error} onRetry={pred.refetch} />
         ) : predChartData ? (
@@ -171,22 +197,27 @@ export default function ForecastScreen() {
               withShadow={false}
             />
 
-            {/* Hourly Horizon Horizontal List with Real Target Time */}
+            {/* Hourly Horizon Horizontal List with Target Time */}
             <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 14 }}>
               <View style={styles.forecastHourRow}>
                 {forecasts.slice(0, 8).map((fc, i) => {
                   const targetD = fc.target_timestamp ? new Date(fc.target_timestamp) : null;
-                  const timeStr = targetD ? targetD.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true }) : `+${fc.step_ahead_hours}h`;
+                  const timeStr = targetD
+                    ? targetD.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true })
+                    : `+${fc.step_ahead_hours}h`;
+                  const low = fc.lower_bound ?? fc.confidence_lower ?? 0;
+                  const high = fc.upper_bound ?? fc.confidence_upper ?? 0;
+                  const cat = fc.category || fc.aqi_category || '--';
 
                   return (
-                    <View key={i} style={[styles.forecastHourCard, { borderLeftColor: fc.color_hex, borderLeftWidth: 3 }]}>
+                    <View key={i} style={[styles.forecastHourCard, { borderLeftColor: fc.color_hex || THEME.primary, borderLeftWidth: 3 }]}>
                       <Text style={styles.fhHour}>{timeStr}</Text>
-                      <Text style={[styles.fhAqi, { color: fc.color_hex }]}>
+                      <Text style={[styles.fhAqi, { color: fc.color_hex || THEME.primaryLight }]}>
                         {Math.round(fc.predicted_aqi)}
                       </Text>
-                      <Text style={styles.fhCat}>{fc.category?.split(' ')[0]}</Text>
+                      <Text style={styles.fhCat} numberOfLines={1}>{cat}</Text>
                       <Text style={styles.fhBound}>
-                        {Math.round(fc.confidence_lower)}–{Math.round(fc.confidence_upper)}
+                        ±{Math.round(fc.expected_error_band ?? (high - low) / 2)}
                       </Text>
                     </View>
                   );
@@ -201,7 +232,7 @@ export default function ForecastScreen() {
         {/* Historical 24-Hour Observation Section */}
         <SectionHeader
           title="Observed 24h Trend"
-          subtitle={`Continuous sensor logs for ${selectedStation}`}
+          subtitle={`Sensor measurements for ${stationList.find(s => (s.station_id || s.id) === currentStationId)?.name || currentStationId}`}
         />
         {hist.loading ? (
           <View style={styles.chartPlaceholder}><LoadingCard message="Retrieving station history..." /></View>
@@ -241,7 +272,7 @@ export default function ForecastScreen() {
           <>
             <SectionHeader
               title="Benchmark Evaluation"
-              subtitle="Holdout test set comparison across candidate architectures"
+              subtitle="Holdout cross-validation comparison across candidate architectures"
             />
             <View style={styles.card}>
               <View style={styles.champRow}>
@@ -272,7 +303,7 @@ export default function ForecastScreen() {
                 })}
               </View>
               <Text style={styles.metricsNote}>
-                Errors reported in AQI index units. Evaluated using a strict temporal 80/20 train-test split without data leakage.
+                Errors reported in AQI index units. Evaluated using expanding-window TimeSeriesSplit cross-validation against persistence baseline.
               </Text>
             </View>
           </>
@@ -402,7 +433,7 @@ const styles = StyleSheet.create({
     borderRadius: THEME.radiusSm,
     padding: 10,
     alignItems: 'center',
-    minWidth: 62,
+    minWidth: 68,
     gap: 3,
   },
   fhHour: {
@@ -417,6 +448,7 @@ const styles = StyleSheet.create({
   fhCat: {
     fontSize: 9,
     color: THEME.textSecondary,
+    maxWidth: 60,
   },
   fhBound: {
     fontSize: 8,

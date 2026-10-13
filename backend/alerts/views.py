@@ -1,23 +1,23 @@
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
-from .models import AlertNotification, UserAlertSubscription
-from .serializers import AlertNotificationSerializer, UserAlertSubscriptionSerializer
+from .models import AlertNotification, DeviceToken
+from .serializers import AlertNotificationSerializer, DeviceTokenSerializer
 from .services import AlertEngine
 
 class ActiveAlertsListView(APIView):
     """
     GET /api/v1/alerts/
     Returns currently active alert notifications across Mumbai.
+    Alert generation is scheduled via generate_alerts management command,
+    not generated inline during read GET requests.
+    Validates limit parameter safely.
     Optional query params:
       - severity (e.g., WARNING, CRITICAL)
-      - station_id (e.g., MUM_BKC)
+      - station_id (e.g., OPENAQ_6927)
       - limit (default: 20)
     """
     def get(self, request):
-        # Auto-evaluate latest records to generate any new threshold breaches
-        AlertEngine.evaluate_and_generate_alerts()
-
         queryset = AlertNotification.objects.filter(is_active=True)
 
         severity = request.query_params.get('severity')
@@ -28,7 +28,13 @@ class ActiveAlertsListView(APIView):
         if station_id:
             queryset = queryset.filter(station__station_id__iexact=station_id)
 
-        limit = int(request.query_params.get('limit', 20))
+        limit_param = request.query_params.get('limit', 20)
+        try:
+            limit = int(limit_param)
+            limit = max(1, min(100, limit))
+        except (ValueError, TypeError):
+            limit = 20
+
         queryset = queryset[:limit]
 
         serializer = AlertNotificationSerializer(queryset, many=True)
@@ -51,22 +57,34 @@ class AdvisoryRecommendationView(APIView):
         return Response(advisory, status=status.HTTP_200_OK)
 
 
-class UserSubscriptionView(APIView):
+class DeviceRegistrationView(APIView):
     """
-    GET  /api/v1/alerts/subscribe/ -> List active subscriptions
-    POST /api/v1/alerts/subscribe/ -> Register alert preferences
+    POST /api/v1/alerts/device-token/ -> Registers or refreshes mobile device push token.
+    Does not expose public listings of subscriber contacts.
     """
-    def get(self, request):
-        subs = UserAlertSubscription.objects.filter(is_active=True)[:50]
-        serializer = UserAlertSubscriptionSerializer(subs, many=True)
-        return Response(serializer.data, status=status.HTTP_200_OK)
-
     def post(self, request):
-        serializer = UserAlertSubscriptionSerializer(data=request.data)
-        if serializer.is_valid():
-            sub = serializer.save()
-            return Response({
-                'message': 'Alert subscription registered successfully.',
-                'subscription': serializer.data
-            }, status=status.HTTP_201_CREATED)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        token_str = request.data.get('token')
+        if not token_str:
+            return Response({"error": "Device token is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        platform = request.data.get('platform', 'ANDROID')
+        station_id = request.data.get('station_id')
+
+        station = None
+        if station_id:
+            from core.models import MonitoringStation
+            station = MonitoringStation.objects.filter(station_id=station_id).first()
+
+        device, created = DeviceToken.objects.update_or_create(
+            token=token_str,
+            defaults={
+                'platform': platform,
+                'station': station,
+                'is_active': True
+            }
+        )
+
+        return Response({
+            'message': 'Device token registered successfully.',
+            'created': created
+        }, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)

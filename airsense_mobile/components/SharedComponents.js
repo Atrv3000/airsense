@@ -64,7 +64,7 @@ export function AQIBadge({ aqi, category, size = 'md' }) {
       isLarge && styles.aqiBadgeLarge
     ]}>
       <Text style={[styles.aqiNum, { color: '#ffffff', fontSize: isLarge ? 48 : 28 }]}>
-        {aqi !== null && aqi !== undefined ? Math.round(aqi) : '--'}
+        {aqi !== null && aqi !== undefined && !isNaN(aqi) ? Math.round(aqi) : '--'}
       </Text>
       <View style={[styles.statusPill, { backgroundColor: color }]}>
         <Text style={styles.statusPillText}>
@@ -84,7 +84,7 @@ export function MetricPill({ label, value, unit, statusColor }) {
         {statusColor && <View style={[styles.metricDot, { backgroundColor: statusColor }]} />}
       </View>
       <Text style={styles.metricValue}>
-        {value !== null && value !== undefined ? Number(value).toFixed(1) : '--'}
+        {value !== null && value !== undefined && !isNaN(value) ? Number(value).toFixed(1) : '--'}
       </Text>
       <Text style={styles.metricUnit}>{unit}</Text>
     </View>
@@ -108,9 +108,9 @@ export function StationCard({ name, aqi, category, zone, onPress }) {
       </View>
       <View style={styles.stationValueWrapper}>
         <Text style={[styles.stationAQI, { color }]}>
-          {aqi !== null ? Math.round(aqi) : '--'}
+          {aqi !== null && aqi !== undefined && !isNaN(aqi) ? Math.round(aqi) : '--'}
         </Text>
-        <Text style={styles.stationCat}>{category?.split(' ')[0] || '--'}</Text>
+        <Text style={styles.stationCat}>{category || '--'}</Text>
       </View>
       <Ionicons name="chevron-forward" size={16} color={THEME.textMuted} />
     </TouchableOpacity>
@@ -120,26 +120,38 @@ export function StationCard({ name, aqi, category, zone, onPress }) {
 // --- Utility Helpers ---
 export function getAQIColor(category) {
   if (!category) return THEME.textMuted;
-  for (const [key, val] of Object.entries(CPCB_COLORS)) {
-    if (category.toLowerCase().includes(key.toLowerCase())) return val;
-  }
+  const catLower = category.toLowerCase().trim();
+  if (catLower.includes('very poor')) return CPCB_COLORS['Very Poor'];
+  if (catLower.includes('poor')) return CPCB_COLORS.Poor;
+  if (catLower.includes('severe')) return CPCB_COLORS.Severe;
+  if (catLower.includes('moderate')) return CPCB_COLORS.Moderate;
+  if (catLower.includes('satisfactory')) return CPCB_COLORS.Satisfactory;
+  if (catLower.includes('good')) return CPCB_COLORS.Good;
   return THEME.textMuted;
 }
 
 export function getHealthAdvice(category) {
-  const map = {
-    good:         'Air quality is satisfactory. Atmospheric conditions pose little or no health risk.',
-    satisfactory: 'Air quality is acceptable. Minor breathing discomfort may occur for highly sensitive individuals.',
-    moderate:     'Air quality is moderate. Children, elderly, and people with respiratory conditions should limit prolonged outdoor exertion.',
-    poor:         'Breathing discomfort likely on prolonged exposure. Avoid strenuous outdoor activity and wear an N95 mask.',
-    'very poor':  'Respiratory illness risk on prolonged exposure. Keep windows closed and operate indoor HEPA filtration.',
-    severe:       'Emergency conditions. Healthy persons may experience significant respiratory discomfort. Remain indoors.',
-  };
-  const key = (category || '').toLowerCase().split(' (')[0];
-  for (const [k, v] of Object.entries(map)) {
-    if (key.includes(k)) return v;
+  if (!category) return 'Observation data currently unavailable. Please refresh shortly.';
+  const catLower = category.toLowerCase().trim();
+  if (catLower.includes('very poor')) {
+    return 'Respiratory illness risk on prolonged exposure. Keep windows closed and operate indoor HEPA filtration.';
   }
-  return 'Real-time observation data currently unavailable. Please refresh shortly.';
+  if (catLower.includes('poor')) {
+    return 'Breathing discomfort likely on prolonged exposure. Avoid strenuous outdoor activity and wear an N95 mask.';
+  }
+  if (catLower.includes('severe')) {
+    return 'Emergency conditions. Healthy persons may experience significant respiratory discomfort. Remain indoors.';
+  }
+  if (catLower.includes('moderate')) {
+    return 'Air quality is moderate. Children, elderly, and people with respiratory conditions should limit prolonged outdoor exertion.';
+  }
+  if (catLower.includes('satisfactory')) {
+    return 'Air quality is acceptable. Minor breathing discomfort may occur for highly sensitive individuals.';
+  }
+  if (catLower.includes('good')) {
+    return 'Air quality is satisfactory. Atmospheric conditions pose little or no health risk.';
+  }
+  return 'Observation data currently unavailable. Please refresh shortly.';
 }
 
 const styles = StyleSheet.create({

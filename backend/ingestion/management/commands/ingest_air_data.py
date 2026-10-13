@@ -38,6 +38,7 @@ class Command(BaseCommand):
         self.stdout.write(self.style.SUCCESS(
             f"\n=== Ingestion Completed Successfully ==="
             f"\nStations processed: {summary['stations_processed']}"
-            f"\nNew records created: {summary['total_records_created']}"
-            f"\nRecords refreshed/updated: {summary['total_records_updated']}"
+            f"\nNew raw records created: {summary.get('total_raw_created', summary.get('total_records_created', 0))}"
+            f"\nRecords refreshed/updated: {summary.get('total_raw_updated', summary.get('total_records_updated', 0))}"
+            f"\nClean measurements processed: {summary.get('total_clean_saved', 0)}"
         ))

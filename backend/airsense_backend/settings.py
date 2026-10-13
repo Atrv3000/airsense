@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 # Build paths inside the project: BASE_DIR is 'backend/'
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-# Load .env file from project root (c:\Users\bawge\Desktop\airsense\.env)
+# Load .env file from project root or backend directory
 ROOT_DIR = BASE_DIR.parent
 env_path = ROOT_DIR / '.env'
 if env_path.exists():
@@ -19,9 +19,12 @@ else:
 
 # Quick-start development settings - unsuitable for production
 SECRET_KEY = os.getenv('SECRET_KEY', 'django-insecure-airsense-mumbai-aqi-fallback-key')
-DEBUG = os.getenv('DEBUG', 'True').lower() in ('true', '1', 'yes')
+DEBUG = os.getenv('DEBUG', 'False').lower() in ('true', '1', 'yes')
 
-allowed_hosts_raw = os.getenv('ALLOWED_HOSTS', 'localhost,127.0.0.1,10.0.2.2,*')
+if DEBUG:
+    allowed_hosts_raw = os.getenv('ALLOWED_HOSTS', 'localhost,127.0.0.1,10.0.2.2,*')
+else:
+    allowed_hosts_raw = os.getenv('ALLOWED_HOSTS', 'localhost,127.0.0.1,10.0.2.2')
 ALLOWED_HOSTS = [host.strip() for host in allowed_hosts_raw.split(',') if host.strip()]
 
 # Application definition
@@ -129,12 +132,15 @@ REST_FRAMEWORK = {
 }
 
 # Cross-Origin Resource Sharing (CORS) for Mobile & Web
-CORS_ALLOW_ALL_ORIGINS = True
+CORS_ALLOW_ALL_ORIGINS = True  # Required for mobile simulator/LAN Expo app access
 CORS_ALLOW_CREDENTIALS = True
+
+# Ingestion trigger secret key (optional protection token)
+INGESTION_SECRET_KEY = os.getenv('INGESTION_SECRET_KEY', '')
 
 # ML Models Directory
 ML_MODELS_DIR = BASE_DIR / 'ml_engine' / 'saved_models'
 os.makedirs(ML_MODELS_DIR, exist_ok=True)
 
-# Allow WebView embedding for mobile app
-X_FRAME_OPTIONS = 'ALLOWALL'
+# Frame options: SAMEORIGIN allows embedded maps on same domain while protecting against clickjacking
+X_FRAME_OPTIONS = 'SAMEORIGIN'

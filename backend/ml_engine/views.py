@@ -5,31 +5,78 @@ from rest_framework.response import Response
 from rest_framework import status
 from django.conf import settings
 from .services.predictor import AQIPredictor
+from .models import ForecastRecord
+from core.models import MonitoringStation
 
 class ForecastAPIView(APIView):
     """
     Returns future AQI predictions for a specific Mumbai monitoring station.
-    Query parameters:
-    - station_id: e.g. MUM_BKC (default: MUM_BKC)
-    - hours: forecast horizon in hours (default: 24, max: 48)
+    Reads from precomputed ForecastRecord if available, or computes on demand.
+    Returns HTTP 503 if no model is trained yet.
     """
     def get(self, request):
-        station_id = request.query_params.get('station_id', 'MUM_BKC')
+        station_id = request.query_params.get('station_id', 'OPENAQ_6927')
         hours = request.query_params.get('hours', 24)
 
         try:
             hours_int = int(hours)
-            hours_int = max(1, min(48, hours_int))  # Clamp between 1 and 48 hours
+            hours_int = max(1, min(48, hours_int))
         except ValueError:
             hours_int = 24
 
+        station = MonitoringStation.objects.filter(station_id=station_id).first()
+        if not station:
+            # Fallback to first available active station
+            station = MonitoringStation.objects.filter(is_active=True).first()
+            if not station:
+                return Response({"error": "No monitoring stations registered."}, status=status.HTTP_404_NOT_FOUND)
+            station_id = station.station_id
+
+        # 1. Try reading from precomputed ForecastRecord for the latest batch
+        latest_rec = ForecastRecord.objects.filter(station=station).order_by('-made_at').first()
+        if latest_rec:
+            cached_forecasts = ForecastRecord.objects.filter(
+                station=station,
+                made_at=latest_rec.made_at,
+                horizon__lte=hours_int
+            ).order_by('horizon')
+
+            if cached_forecasts.count() >= min(hours_int, 24):
+                forecast_items = []
+                for cf in cached_forecasts[:hours_int]:
+                    forecast_items.append({
+                        "step_ahead_hours": cf.horizon,
+                        "target_timestamp": cf.target_time.isoformat(),
+                        "predicted_aqi": cf.predicted_aqi,
+                        "expected_error_band": cf.expected_error_band,
+                        "confidence_lower": max(0.0, round(cf.predicted_aqi - cf.expected_error_band, 1)),
+                        "confidence_upper": min(500.0, round(cf.predicted_aqi + cf.expected_error_band, 1)),
+                        "category": cf.category,
+                        "color_hex": cf.color_hex
+                    })
+                return Response({
+                    "station_id": station.station_id,
+                    "station_name": station.name,
+                    "forecast_generated_at": latest_rec.made_at.isoformat(),
+                    "model_used": latest_rec.model_version,
+                    "horizon_hours": len(forecast_items),
+                    "forecasts": forecast_items
+                }, status=status.HTTP_200_OK)
+
+        # 2. Compute on demand
         try:
             forecast_data = AQIPredictor.forecast_station_aqi(station_id, horizon_hours=hours_int)
             return Response(forecast_data, status=status.HTTP_200_OK)
-        except (ValueError, FileNotFoundError) as e:
+        except FileNotFoundError as e:
+            return Response({
+                "status": "not_trained",
+                "message": "Model not trained. Please train the forecasting model first."
+            }, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        except ValueError as e:
             return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
         except Exception as e:
             return Response({"error": f"Internal prediction error: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
 
 class ModelMetricsAPIView(APIView):
     """
@@ -44,7 +91,7 @@ class ModelMetricsAPIView(APIView):
             return Response({
                 "status": "not_trained",
                 "message": "No trained model found. Please run 'python manage.py train_models'."
-            }, status=status.HTTP_404_NOT_FOUND)
+            }, status=status.HTTP_503_SERVICE_UNAVAILABLE)
 
         try:
             with open(metadata_path, 'r') as f:

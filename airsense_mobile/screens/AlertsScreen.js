@@ -1,9 +1,10 @@
 /**
- * Tab 4: Health Advisories & Regulatory Protocols Screen
+ * Tab 4: Health Advisories & Active Alerts Screen
  * Built as an operational public health guidance system:
- * CPCB classification matrix, activity restrictions, and emergency protocols without emojis.
+ * Active station alerts (measured & forecast), CPCB classification matrix,
+ * activity restrictions, and emergency protocols without emojis or NaN states.
  */
-import React from 'react';
+import React, { useState } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, RefreshControl
 } from 'react-native';
@@ -83,18 +84,22 @@ const PRECAUTIONARY_PROTOCOLS = [
 ];
 
 export default function AlertsScreen() {
-  const { data, loading, refetch } = useFetch(ENDPOINTS.liveAqi);
-  const [refreshing, setRefreshing] = React.useState(false);
+  const liveAqi = useFetch(ENDPOINTS.liveAqi);
+  const alertsFetch = useFetch(ENDPOINTS.alerts);
+  const [refreshing, setRefreshing] = useState(false);
 
   const onRefresh = async () => {
     setRefreshing(true);
-    await refetch();
+    await Promise.all([liveAqi.refetch(), alertsFetch.refetch()]);
     setRefreshing(false);
   };
 
-  const cityAQI = data?.city_average_aqi;
-  const cityCat = data?.city_category;
+  const cityAQI = liveAqi.data?.city_average_aqi;
+  const hasValidCityAqi = cityAQI !== null && cityAQI !== undefined && !isNaN(cityAQI);
+  const cityCat = liveAqi.data?.city_category;
   const cityColor = getAQIColor(cityCat);
+
+  const activeAlerts = alertsFetch.data?.alerts || [];
 
   return (
     <View style={styles.container}>
@@ -120,19 +125,60 @@ export default function AlertsScreen() {
           <View style={styles.statusHeader}>
             <View style={{ flex: 1 }}>
               <Text style={styles.statusLabel}>Current Ambient Tier</Text>
-              <Text style={styles.statusCategory}>{cityCat || 'Assessing...'}</Text>
+              <Text style={styles.statusCategory}>{cityCat || (liveAqi.loading ? 'Assessing...' : 'No data')}</Text>
             </View>
             <View style={styles.statusScoreWrap}>
               <Text style={[styles.statusScore, { color: cityColor }]}>
-                {cityAQI !== null ? Math.round(cityAQI) : '--'}
+                {hasValidCityAqi ? Math.round(cityAQI) : '--'}
               </Text>
               <Text style={styles.statusScoreLabel}>AQI</Text>
             </View>
           </View>
           <Text style={styles.statusExplanation}>
-            Standard precautions applicable across Greater Mumbai based on Central Pollution Control Board (CPCB) NAQI guidelines.
+            Mean of active monitoring station AQIs across Greater Mumbai based on Central Pollution Control Board (CPCB) NAQI guidelines.
           </Text>
         </View>
+
+        {/* Active Emergency & Forecast Alerts */}
+        <SectionHeader
+          title="Active Hotspot Alerts"
+          subtitle="Real-time threshold exceedances (AQI ≥ 201) and predictive warnings"
+        />
+        {alertsFetch.loading ? (
+          <LoadingCard message="Checking active sensor warnings..." />
+        ) : activeAlerts.length > 0 ? (
+          activeAlerts.map((alert) => {
+            const isForecast = alert.is_forecast_alert;
+            const aqiVal = alert.aqi_value ?? alert.actual_aqi;
+            const alertColor = (aqiVal != null && aqiVal >= 301) ? CPCB_COLORS['Very Poor'] : CPCB_COLORS.Poor;
+
+            return (
+              <View key={alert.id} style={[styles.alertNotificationCard, { borderLeftColor: alertColor }]}>
+                <View style={styles.alertHeaderRow}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.alertStationName}>{alert.station_name || alert.station_code || alert.station_id}</Text>
+                    <Text style={styles.alertTypeTag}>
+                      {isForecast ? `Forecast Warning (+${alert.forecast_horizon_hours}h Horizon)` : 'Active Observed Exceedance'}
+                    </Text>
+                  </View>
+                  <View style={[styles.alertScoreBadge, { backgroundColor: alertColor }]}>
+                    <Text style={styles.alertScoreText}>
+                      AQI {aqiVal != null ? Math.round(aqiVal) : '--'}
+                    </Text>
+                  </View>
+                </View>
+                <Text style={styles.alertMessage}>{alert.message}</Text>
+              </View>
+            );
+          })
+        ) : (
+          <View style={styles.allClearCard}>
+            <Ionicons name="checkmark-circle-outline" size={20} color={THEME.success} />
+            <Text style={styles.allClearText}>
+              All active monitoring stations currently below Poor hotspot threshold (AQI &lt; 201).
+            </Text>
+          </View>
+        )}
 
         {/* CPCB Health Severity Matrix */}
         <SectionHeader
@@ -250,6 +296,66 @@ const styles = StyleSheet.create({
     color: THEME.textSecondary,
     fontSize: 12,
     lineHeight: 17,
+  },
+  alertNotificationCard: {
+    backgroundColor: THEME.surface,
+    marginHorizontal: 16,
+    marginBottom: 10,
+    borderRadius: THEME.radiusMd,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: THEME.border,
+    borderLeftWidth: 4,
+    gap: 8,
+  },
+  alertHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    gap: 8,
+  },
+  alertStationName: {
+    color: THEME.textPrimary,
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  alertTypeTag: {
+    color: THEME.textMuted,
+    fontSize: 11,
+    marginTop: 2,
+  },
+  alertScoreBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+  },
+  alertScoreText: {
+    color: '#ffffff',
+    fontSize: 11,
+    fontWeight: '800',
+  },
+  alertMessage: {
+    color: THEME.textSecondary,
+    fontSize: 12,
+    lineHeight: 17,
+  },
+  allClearCard: {
+    backgroundColor: THEME.surface,
+    marginHorizontal: 16,
+    marginBottom: 8,
+    borderRadius: THEME.radiusMd,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: THEME.border,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  allClearText: {
+    color: THEME.textSecondary,
+    fontSize: 12,
+    flex: 1,
+    lineHeight: 16,
   },
   tierCard: {
     backgroundColor: THEME.surface,

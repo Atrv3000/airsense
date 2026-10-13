@@ -14,14 +14,22 @@ export function useFetch(url, options = {}) {
     if (!url) return;
     setLoading(true);
     setError(null);
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 12000);
     try {
-      const res = await fetch(url, { ...options, timeout: 12000 });
+      const res = await fetch(url, { ...options, signal: controller.signal });
+      clearTimeout(timeoutId);
       if (!res.ok) throw new Error(`Server error: ${res.status}`);
       const json = await res.json();
       setData(json);
     } catch (e) {
-      setError(e.message || 'Network request failed. Is the Django server running?');
+      if (e.name === 'AbortError') {
+        setError('Request timed out. Please check your network connection.');
+      } else {
+        setError(e.message || 'Network request failed. Is the Django server running?');
+      }
     } finally {
+      clearTimeout(timeoutId);
       setLoading(false);
     }
   }, [url]);

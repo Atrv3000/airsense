@@ -3,6 +3,10 @@ import Constants from 'expo-constants';
 import { Platform } from 'react-native';
 
 function getApiBaseUrl() {
+  if (process.env.EXPO_PUBLIC_API_URL) {
+    return process.env.EXPO_PUBLIC_API_URL;
+  }
+
   const hostUri = Constants.expoConfig?.hostUri;
   if (hostUri) {
     const ip = hostUri.split(':')[0];
@@ -19,6 +23,8 @@ function getApiBaseUrl() {
 }
 
 export const API_BASE_URL = getApiBaseUrl();
+
+export const HOTSPOT_THRESHOLD = 201.0;
 
 export const ENDPOINTS = {
   health:        `${API_BASE_URL}/api/v1/health/`,

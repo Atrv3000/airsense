@@ -2,10 +2,10 @@ from django.test import TestCase
 from django.utils import timezone
 from rest_framework.test import APIClient
 from rest_framework import status
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from core.models import MonitoringStation
-from ingestion.models import RawMeasurement
+from ingestion.models import RawMeasurement, CleanMeasurement
 from ingestion.services.preprocessor import DataPreprocessor
 from ingestion.services.station_seeder import seed_mumbai_stations
 
@@ -13,11 +13,11 @@ class IngestionPipelineTestCase(TestCase):
     def setUp(self):
         self.client = APIClient()
         self.station = MonitoringStation.objects.create(
-            station_id="TEST_BKC",
-            name="Test BKC Station",
-            latitude=19.0657,
-            longitude=72.8687,
-            zone_type="COMMERCIAL"
+            station_id="OPENAQ_6927",
+            name="Colaba, Mumbai - MPCB",
+            latitude=18.91,
+            longitude=72.82,
+            zone_type="COASTAL"
         )
         self.tz = ZoneInfo("Asia/Kolkata")
 
@@ -53,18 +53,40 @@ class IngestionPipelineTestCase(TestCase):
         self.assertIsNone(cleaned_invalid["co"])
         self.assertIsNone(cleaned_invalid["temperature"])
 
+    def test_preprocessor_spike_detection(self):
+        prev_rec = {"pm25": 50.0, "pm10": 100.0}
+        curr_rec = {"pm25": 350.0, "pm10": 120.0}  # PM2.5 jumped by 300 (exceeds 250 spike threshold)
+        cleaned = DataPreprocessor.clean_record(curr_rec, prev_record=prev_rec)
+        self.assertIsNone(cleaned["pm25"])
+        self.assertEqual(cleaned["pm10"], 120.0)
+
+    def test_preprocessor_interpolation(self):
+        # 3-hour gap interpolation
+        t0 = timezone.now()
+        records = [
+            {"pm25": 50.0, "recorded_at": t0},
+            {"pm25": None, "recorded_at": t0 + timedelta(hours=1)},
+            {"pm25": None, "recorded_at": t0 + timedelta(hours=2)},
+            {"pm25": 80.0, "recorded_at": t0 + timedelta(hours=3)},
+        ]
+        interp = DataPreprocessor.interpolate_short_gaps(records, max_gap_hours=3)
+        self.assertEqual(interp[1]["pm25"], 60.0)
+        self.assertEqual(interp[2]["pm25"], 70.0)
+        self.assertTrue(interp[1]["is_imputed"])
+        self.assertIn("pm25", interp[1]["imputed_fields"])
+
     def test_station_seeding(self):
         result = seed_mumbai_stations()
-        self.assertEqual(result["total"], 10)
-        self.assertTrue(MonitoringStation.objects.filter(station_id="MUM_BKC").exists())
-        self.assertTrue(MonitoringStation.objects.filter(station_id="MUM_CHEMBUR").exists())
+        self.assertGreaterEqual(result["total"], 10)
+        self.assertTrue(MonitoringStation.objects.filter(station_id="OPENAQ_6927").exists())
+        self.assertTrue(MonitoringStation.objects.filter(station_id="OPENAQ_6945").exists())
 
     def test_measurement_storage_and_unique_constraint(self):
         now = datetime.now(self.tz)
         rec1, created1 = RawMeasurement.objects.update_or_create(
             station=self.station,
             recorded_at=now,
-            defaults={"pm25": 55.0, "pm10": 110.0}
+            defaults={"pm25": 55.0, "pm10": 110.0, "source": "OPENAQ_MEASURED"}
         )
         self.assertTrue(created1)
 
@@ -72,11 +94,31 @@ class IngestionPipelineTestCase(TestCase):
         rec2, created2 = RawMeasurement.objects.update_or_create(
             station=self.station,
             recorded_at=now,
-            defaults={"pm25": 58.0, "pm10": 115.0}
+            defaults={"pm25": 58.0, "pm10": 115.0, "source": "OPENAQ_MEASURED"}
         )
         self.assertFalse(created2) # Should update, not create duplicate
         self.assertEqual(rec2.pm25, 58.0)
         self.assertEqual(RawMeasurement.objects.filter(station=self.station).count(), 1)
+
+    def test_clean_measurement_storage(self):
+        now = datetime.now(self.tz)
+        raw = RawMeasurement.objects.create(
+            station=self.station,
+            recorded_at=now,
+            pm25=55.0,
+            pm10=110.0,
+            source="OPENAQ_MEASURED"
+        )
+        clean = CleanMeasurement.objects.create(
+            station=self.station,
+            recorded_at=now,
+            pm25=55.0,
+            pm10=110.0,
+            source="OPENAQ_MEASURED",
+            raw_measurement=raw
+        )
+        self.assertEqual(clean.source, "OPENAQ_MEASURED")
+        self.assertFalse(clean.is_imputed)
 
     def test_api_station_list(self):
         response = self.client.get('/api/v1/stations/')
@@ -89,9 +131,11 @@ class IngestionPipelineTestCase(TestCase):
             station=self.station,
             recorded_at=now,
             pm25=60.0,
-            pm10=120.0
+            pm10=120.0,
+            source="OPENAQ_MEASURED"
         )
         response = self.client.get(f'/api/v1/ingestion/measurements/?station_id={self.station.station_id}')
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(len(response.data), 1)
         self.assertEqual(response.data[0]['pm25'], 60.0)
+        self.assertEqual(response.data[0]['source'], "OPENAQ_MEASURED")

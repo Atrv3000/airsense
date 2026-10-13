@@ -17,6 +17,7 @@ class AQIRecordSerializer(serializers.ModelSerializer):
     temperature = serializers.FloatField(source='raw_measurement.temperature', read_only=True)
     humidity = serializers.FloatField(source='raw_measurement.humidity', read_only=True)
     wind_speed = serializers.FloatField(source='raw_measurement.wind_speed', read_only=True)
+    source = serializers.CharField(source='raw_measurement.source', read_only=True, default='OPEN_METEO_MODELLED')
 
     class Meta:
         model = AQIRecord
@@ -27,6 +28,7 @@ class AQIRecordSerializer(serializers.ModelSerializer):
             'latitude',
             'longitude',
             'recorded_at',
+            'source',
             'overall_aqi',
             'prominent_pollutant',
             'aqi_category',

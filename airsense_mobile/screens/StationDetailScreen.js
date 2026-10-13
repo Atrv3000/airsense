@@ -1,13 +1,13 @@
 /**
  * StationDetailScreen.js
  * Shows granular continuous air quality & surface meteorology readings
- * for a specific monitoring station. Redesigned with clean SaaS typography,
- * consistent cards, and zero emojis.
+ * for a specific monitoring station, plus 24h forecast and historical series.
+ * Free of fake authority claims; honestly labels measured vs modelled feeds.
  */
 import React, { useState } from 'react';
 import {
   View, Text, StyleSheet, ScrollView,
-  TouchableOpacity, StatusBar, RefreshControl
+  TouchableOpacity, StatusBar, RefreshControl, Dimensions
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useFetch } from '../hooks/useFetch';
@@ -17,26 +17,45 @@ import {
 } from '../components/SharedComponents';
 import { ENDPOINTS, THEME } from '../config';
 
+const { width: SCREEN_W } = Dimensions.get('window');
+
 export default function StationDetailScreen({ route, navigation }) {
   const { station } = route.params || {};
-  const stationId = station?.station_id_code || station?.id || 'MUM_BKC';
+  const stationId = station?.station_id_code || station?.station_id || station?.id || 'OPENAQ_6927';
   const stationName = station?.station_name || station?.name || stationId;
 
   const url = ENDPOINTS.stationAqi(stationId);
   const { data, loading, error, refetch } = useFetch(url);
+  const forecastFetch = useFetch(`${ENDPOINTS.predict}?station_id=${stationId}&hours=24`);
+  const historyFetch = useFetch(`${ENDPOINTS.historicalAqi}?station_id=${stationId}&limit=24`);
+
   const [refreshing, setRefreshing] = useState(false);
 
   const onRefresh = async () => {
     setRefreshing(true);
-    await refetch();
+    await Promise.all([refetch(), forecastFetch.refetch(), historyFetch.refetch()]);
     setRefreshing(false);
   };
 
-  const current = data?.current || station || {};
-  const aqiVal = current.overall_aqi ?? current.aqi ?? 0;
-  const aqiCat = current.aqi_category ?? current.category ?? 'Unknown';
+  // Support direct object returned by StationAQIDetailView or nested structures
+  const current = data?.station_id_code ? data : (data?.current || station || {});
+  const aqiVal = (current.overall_aqi !== null && current.overall_aqi !== undefined && !isNaN(current.overall_aqi))
+    ? current.overall_aqi
+    : null;
+  const aqiCat = current.aqi_category || current.category || (aqiVal !== null ? 'Assessing' : 'No data');
   const aqiColor = getAQIColor(aqiCat);
   const healthMsg = getHealthAdvice(aqiCat);
+
+  const isMeasured = current.source === 'OPENAQ_MEASURED' || current.source === 'CPCB_OFFICIAL';
+  const sourceLabel = current.source === 'CPCB_OFFICIAL'
+    ? 'Official CPCB CAAQMS'
+    : (current.source === 'OPENAQ_MEASURED' ? 'OpenAQ Ground Station' : 'Open-Meteo Atmospheric Grid');
+  const feedType = current.source === 'CPCB_OFFICIAL'
+    ? 'Official Ground Sensor'
+    : (isMeasured ? 'Measured Sensor' : 'Modelled Reanalysis');
+
+  const forecasts = forecastFetch.data?.forecasts || [];
+  const historyList = historyFetch.data?.history || [];
 
   return (
     <View style={styles.container}>
@@ -67,14 +86,17 @@ export default function StationDetailScreen({ route, navigation }) {
           </View>
         </View>
 
-        {/* Station Title */}
+        {/* Station Title & Honest Source Designation */}
         <View style={styles.titleSection}>
           <Text style={styles.stationTitle}>{stationName}</Text>
-          <Text style={styles.stationSubtitle}>Continuous Ambient Air Quality Monitoring Station (CAAQMS)</Text>
+          <View style={styles.sourcePillRow}>
+            <View style={[styles.sourceDot, { backgroundColor: isMeasured ? THEME.success : THEME.primaryLight }]} />
+            <Text style={styles.stationSubtitle}>{sourceLabel} ({feedType})</Text>
+          </View>
         </View>
 
         {loading && !refreshing ? (
-          <LoadingCard message="Querying station sensors..." />
+          <LoadingCard message="Retrieving station records..." />
         ) : error ? (
           <ErrorCard message={error} onRetry={refetch} />
         ) : (
@@ -85,12 +107,12 @@ export default function StationDetailScreen({ route, navigation }) {
               <View style={styles.heroMeta}>
                 <View style={styles.heroMetaItem}>
                   <Text style={styles.heroMetaLabel}>Prominent Pollutant</Text>
-                  <Text style={styles.heroMetaVal}>{current.prominent_pollutant || 'PM2.5'}</Text>
+                  <Text style={styles.heroMetaVal}>{current.prominent_pollutant || 'None'}</Text>
                 </View>
                 <View style={styles.heroMetaDivider} />
                 <View style={styles.heroMetaItem}>
-                  <Text style={styles.heroMetaLabel}>Sensor Authority</Text>
-                  <Text style={styles.heroMetaVal}>CPCB / MPCB</Text>
+                  <Text style={styles.heroMetaLabel}>Telemetry Feed</Text>
+                  <Text style={styles.heroMetaVal}>{feedType}</Text>
                 </View>
               </View>
             </View>
@@ -98,7 +120,7 @@ export default function StationDetailScreen({ route, navigation }) {
             {/* Health Advisory */}
             <View style={[styles.advisoryCard, { borderLeftColor: aqiColor }]}>
               <View style={styles.advisoryHeader}>
-                <Ionicons name="medical-outline" size={16} color={THEME.primaryLight} />
+                <Ionicons name="shield-checkmark-outline" size={16} color={THEME.primaryLight} />
                 <Text style={styles.advisoryTitle}>Health Advisory</Text>
               </View>
               <Text style={styles.advisoryText}>{healthMsg}</Text>
@@ -107,7 +129,7 @@ export default function StationDetailScreen({ route, navigation }) {
             {/* Granular Pollutant Concentrations */}
             <SectionHeader
               title="Pollutant Concentrations"
-              subtitle="Calibrated microgram concentrations and gas sub-indices"
+              subtitle="Concentrations and parameters recorded for this station"
             />
             <View style={styles.metricsGrid}>
               <MetricPill label="PM2.5" value={current.raw_pm25 ?? current.pm25} unit="µg/m³" statusColor="#f87171" />
@@ -125,30 +147,104 @@ export default function StationDetailScreen({ route, navigation }) {
             {/* Surface Meteorology Conditions */}
             <SectionHeader
               title="Surface Meteorology"
-              subtitle="Co-located automatic weather station telemetry"
+              subtitle="Atmospheric conditions at station coordinates"
             />
             <View style={styles.weatherSummaryRow}>
               <View style={styles.weatherItem}>
                 <Text style={styles.weatherLabel}>Temperature</Text>
                 <Text style={styles.weatherValue}>
-                  {current.temperature ? current.temperature.toFixed(1) + ' °C' : '--'}
+                  {current.temperature != null ? Number(current.temperature).toFixed(1) + ' °C' : '--'}
                 </Text>
               </View>
               <View style={styles.weatherItemDivider} />
               <View style={styles.weatherItem}>
                 <Text style={styles.weatherLabel}>Relative Humidity</Text>
                 <Text style={styles.weatherValue}>
-                  {current.humidity ? current.humidity.toFixed(0) + ' %' : '--'}
+                  {current.humidity != null ? Number(current.humidity).toFixed(0) + ' %' : '--'}
                 </Text>
               </View>
               <View style={styles.weatherItemDivider} />
               <View style={styles.weatherItem}>
-                <Text style={styles.weatherLabel}>Wind Velocity</Text>
+                <Text style={styles.weatherLabel}>Wind Speed</Text>
                 <Text style={styles.weatherValue}>
-                  {current.wind_speed ? current.wind_speed.toFixed(1) + ' km/h' : '--'}
+                  {current.wind_speed != null ? Number(current.wind_speed).toFixed(1) + ' km/h' : '--'}
                 </Text>
               </View>
             </View>
+
+            {/* 24-Hour Predictive Forecast Horizon */}
+            <SectionHeader
+              title="24-Hour Forecast"
+              subtitle="Trained ML model projection with expected error bounds"
+            />
+            {forecastFetch.loading ? (
+              <LoadingCard message="Loading forecast projections..." />
+            ) : forecasts.length > 0 ? (
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.forecastStrip}>
+                {forecasts.map((fc, i) => {
+                  const targetD = fc.target_timestamp ? new Date(fc.target_timestamp) : null;
+                  const timeLabel = targetD
+                    ? targetD.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true })
+                    : `+${fc.step_ahead_hours}h`;
+                  const low = fc.lower_bound ?? fc.confidence_lower ?? 0;
+                  const high = fc.upper_bound ?? fc.confidence_upper ?? 0;
+
+                  return (
+                    <View key={i} style={[styles.forecastCard, { borderTopColor: fc.color_hex || THEME.primary, borderTopWidth: 3 }]}>
+                      <Text style={styles.fcHour}>{timeLabel}</Text>
+                      <Text style={[styles.fcAqi, { color: fc.color_hex || THEME.primaryLight }]}>
+                        {Math.round(fc.predicted_aqi)}
+                      </Text>
+                      <Text style={styles.fcCat}>{fc.category || 'AQI'}</Text>
+                      <Text style={styles.fcRange}>{Math.round(low)}–{Math.round(high)}</Text>
+                    </View>
+                  );
+                })}
+              </ScrollView>
+            ) : (
+              <View style={styles.emptyCard}>
+                <Text style={styles.emptyText}>No precomputed forecast available for this station.</Text>
+              </View>
+            )}
+
+            {/* Recent Observation History */}
+            <SectionHeader
+              title="Recent Observed History"
+              subtitle="Latest validated measurements recorded"
+            />
+            {historyFetch.loading ? (
+              <LoadingCard message="Retrieving station history..." />
+            ) : historyList.length > 0 ? (
+              <View style={styles.historyCard}>
+                {historyList.slice(0, 8).map((rec, i) => {
+                  const d = new Date(rec.recorded_at);
+                  const timeStr = d.toLocaleDateString('en-IN', { month: 'short', day: 'numeric' }) + ' ' +
+                                  d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true });
+                  const color = rec.color_hex || getAQIColor(rec.aqi_category);
+
+                  return (
+                    <View key={rec.id || i} style={[styles.historyRow, i > 0 && styles.historyRowBorder]}>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.historyTime}>{timeStr}</Text>
+                        <Text style={styles.historyPollutant}>
+                          Prominent: {rec.prominent_pollutant || 'None'}
+                        </Text>
+                      </View>
+                      <View style={{ alignItems: 'flex-end' }}>
+                        <Text style={[styles.historyAqi, { color }]}>
+                          {rec.overall_aqi != null ? Math.round(rec.overall_aqi) : '--'}
+                        </Text>
+                        <Text style={styles.historyCat}>{rec.aqi_category || '--'}</Text>
+                      </View>
+                    </View>
+                  );
+                })}
+              </View>
+            ) : (
+              <View style={styles.emptyCard}>
+                <Text style={styles.emptyText}>No historical records available for this station.</Text>
+              </View>
+            )}
           </>
         )}
 
@@ -208,10 +304,20 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     letterSpacing: -0.3,
   },
+  sourcePillRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 4,
+  },
+  sourceDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+  },
   stationSubtitle: {
     color: THEME.textMuted,
     fontSize: 12,
-    marginTop: 2,
   },
   heroCard: {
     marginHorizontal: 16,
@@ -316,5 +422,88 @@ const styles = StyleSheet.create({
     color: THEME.textPrimary,
     fontSize: 13,
     fontWeight: '700',
+  },
+  forecastStrip: {
+    paddingHorizontal: 16,
+    gap: 8,
+    paddingBottom: 8,
+  },
+  forecastCard: {
+    backgroundColor: THEME.surface,
+    borderRadius: THEME.radiusSm,
+    padding: 12,
+    alignItems: 'center',
+    minWidth: 70,
+    borderWidth: 1,
+    borderColor: THEME.border,
+    gap: 3,
+  },
+  fcHour: {
+    color: THEME.textMuted,
+    fontSize: 10,
+    fontWeight: '600',
+  },
+  fcAqi: {
+    fontSize: 17,
+    fontWeight: '800',
+  },
+  fcCat: {
+    color: THEME.textSecondary,
+    fontSize: 9,
+    fontWeight: '600',
+  },
+  fcRange: {
+    color: THEME.textMuted,
+    fontSize: 8,
+  },
+  historyCard: {
+    backgroundColor: THEME.surface,
+    marginHorizontal: 16,
+    borderRadius: THEME.radiusMd,
+    borderWidth: 1,
+    borderColor: THEME.border,
+    paddingHorizontal: 14,
+    paddingVertical: 4,
+  },
+  historyRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 10,
+  },
+  historyRowBorder: {
+    borderTopWidth: 1,
+    borderTopColor: THEME.border,
+  },
+  historyTime: {
+    color: THEME.textPrimary,
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  historyPollutant: {
+    color: THEME.textMuted,
+    fontSize: 10,
+    marginTop: 2,
+  },
+  historyAqi: {
+    fontSize: 15,
+    fontWeight: '800',
+  },
+  historyCat: {
+    color: THEME.textMuted,
+    fontSize: 10,
+  },
+  emptyCard: {
+    backgroundColor: THEME.surface,
+    marginHorizontal: 16,
+    borderRadius: THEME.radiusMd,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: THEME.border,
+    alignItems: 'center',
+  },
+  emptyText: {
+    color: THEME.textMuted,
+    fontSize: 12,
   },
 });

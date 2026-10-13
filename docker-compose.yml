@@ -29,7 +29,8 @@ services:
     restart: always
     command: >
       sh -c "python manage.py migrate &&
-             python manage.py seed_stations &&
+             python manage.py ingest_air_data &&
+             python manage.py train_models &&
              gunicorn airsense_backend.wsgi:application --bind 0.0.0.0:8000 --workers 3 --timeout 120"
     ports:
       - "8000:8000"
@@ -41,6 +42,7 @@ services:
       - DB_PASSWORD=${DB_PASSWORD:-abcd1234}
       - DB_HOST=db
       - DB_PORT=5432
+      - OPENAQ_API_KEY=${OPENAQ_API_KEY}
       - ALLOWED_HOSTS=*
     depends_on:
       db:

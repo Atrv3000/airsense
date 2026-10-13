@@ -36,6 +36,30 @@ class LiveAQIListView(APIView):
             worst_station = None
             cleanest_station = None
 
+        def mean_of(field):
+            vals = [s[field] for s in station_records if s.get(field) is not None]
+            if not vals:
+                from ingestion.models import CleanMeasurement
+                db_field = field.replace('raw_', '')
+                recent_vals = list(CleanMeasurement.objects.filter(
+                    station__is_active=True,
+                    **{f"{db_field}__isnull": False}
+                ).order_by('-recorded_at').values_list(db_field, flat=True)[:15])
+                vals = [v for v in recent_vals if v is not None]
+            return round(sum(vals) / len(vals), 1 if field != 'raw_co' else 2) if vals else None
+
+        city_pollutants = {
+            "pm25": mean_of('raw_pm25'),
+            "pm10": mean_of('raw_pm10'),
+            "no2": mean_of('raw_no2'),
+            "so2": mean_of('raw_so2'),
+            "co": mean_of('raw_co'),
+            "o3": mean_of('raw_o3'),
+            "temperature": mean_of('temperature'),
+            "humidity": round(mean_of('humidity'), 0) if mean_of('humidity') is not None else None,
+            "wind_speed": mean_of('wind_speed'),
+        }
+
         return Response({
             "region": "Greater Mumbai",
             "city_average_aqi": city_avg_aqi,
@@ -44,6 +68,7 @@ class LiveAQIListView(APIView):
             "monitored_stations_count": len(station_records),
             "worst_location": worst_station,
             "cleanest_location": cleanest_station,
+            "city_pollutants": city_pollutants,
             "stations": station_records
         }, status=status.HTTP_200_OK)
 

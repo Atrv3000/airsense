@@ -424,10 +424,17 @@
                     }
 
                     const tagTextColor = isLightBg ? '#0f172a' : '#ffffff';
+                    const sourceBadge = p.is_measured 
+                        ? '<span style="display:inline-block; font-size:0.65rem; padding:2px 6px; border-radius:4px; background:#0284c7; color:#fff; font-weight:700; margin-top:4px;">MEASURED (Ground Sensor)</span>'
+                        : '<span style="display:inline-block; font-size:0.65rem; padding:2px 6px; border-radius:4px; background:#475569; color:#cbd5e1; font-weight:700; margin-top:4px;">MODELLED (Atmospheric)</span>';
+
                     const popupContent = `
                         <div class="popup-box">
                             <div class="popup-header">
-                                <div class="popup-title">${p.name}</div>
+                                <div>
+                                    <div class="popup-title">${p.name}</div>
+                                    ${sourceBadge}
+                                </div>
                                 <div class="popup-tag" style="background-color: ${aqiColor}; color: ${tagTextColor};">
                                     ${Math.round(p.current_aqi)} ${p.category}
                                 </div>
@@ -435,7 +442,7 @@
                             <div class="popup-grid">
                                 <div class="popup-cell">PM2.5<span>${p.pm25 ? p.pm25 + ' µg' : '--'}</span></div>
                                 <div class="popup-cell">PM10<span>${p.pm10 ? p.pm10 + ' µg' : '--'}</span></div>
-                                <div class="popup-cell">Prominent<span>${p.prominent_pollutant || 'PM2.5'}</span></div>
+                                <div class="popup-cell">Prominent<span>${p.prominent_pollutant || 'None'}</span></div>
                                 <div class="popup-cell">Temp<span>${p.temperature ? p.temperature + '°C' : '--'}</span></div>
                             </div>
                             ${forecastHtml}

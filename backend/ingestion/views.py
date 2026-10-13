@@ -1,3 +1,5 @@
+import os
+from django.conf import settings
 from rest_framework import generics, status
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -34,9 +36,18 @@ class MeasurementListAPIView(generics.ListAPIView):
 class TriggerIngestionAPIView(APIView):
     """
     Triggers an immediate ingestion pass for Mumbai stations.
-    Useful for manual testing, mobile pull-to-refresh sync, and cron triggers.
+    Protected by secret key check when INGESTION_SECRET_KEY is configured.
     """
     def post(self, request):
+        required_secret = getattr(settings, 'INGESTION_SECRET_KEY', '') or os.getenv('INGESTION_SECRET_KEY', '')
+        if required_secret:
+            provided_secret = request.headers.get('X-Ingestion-Key') or request.data.get('secret_key')
+            if provided_secret != required_secret:
+                return Response(
+                    {"error": "Unauthorized. Invalid or missing ingestion secret key."},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+
         days = request.data.get('days', 2)
         try:
             days_int = int(days)

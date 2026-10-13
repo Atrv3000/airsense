@@ -3,6 +3,7 @@ from typing import List, Dict, Any
 from django.utils import timezone
 from core.models import MonitoringStation
 from aqi_engine.models import AQIRecord
+from ml_engine.models import ForecastRecord
 from alerts.models import AlertNotification
 
 logger = logging.getLogger(__name__)
@@ -10,7 +11,7 @@ logger = logging.getLogger(__name__)
 class AlertEngine:
     """
     Evaluates live AQI metrics and forecasts against CPCB health safety levels.
-    Generates structured AlertNotifications and actionable recommendations.
+    Generates structured AlertNotifications and auto-resolves alerts when AQI drops below thresholds.
     """
 
     ADVISORY_MATRIX = {
@@ -70,54 +71,108 @@ class AlertEngine:
     @classmethod
     def evaluate_and_generate_alerts(cls, threshold_override: float = None) -> List[AlertNotification]:
         """
-        Inspects the latest AQIRecord for each station and creates alert records
-        when AQI breaches safety criteria (AQI >= 150 or threshold_override).
+        1. Evaluates latest AQIRecord for each station and creates alert when AQI >= 201 or in Poor/Very Poor/Severe.
+        2. Auto-resolves active alerts if the station's current AQI drops below the alert threshold.
+        3. Evaluates ForecastRecord predictions and generates proactive forecast-based alerts.
+        Safely handles cases where overall_aqi is None.
         """
         created_alerts = []
+        now = timezone.now()
+        threshold = threshold_override if threshold_override is not None else 201.0
         stations = MonitoringStation.objects.filter(is_active=True)
 
         for station in stations:
             latest_record = AQIRecord.objects.filter(station=station).order_by('-recorded_at').first()
-            if not latest_record:
-                continue
 
-            aqi = latest_record.overall_aqi
-            cat = latest_record.aqi_category
-            threshold = threshold_override if threshold_override is not None else 180.0
+            if latest_record and latest_record.overall_aqi is not None:
+                aqi = latest_record.overall_aqi
+                cat = latest_record.aqi_category
 
-            # If AQI crosses warning threshold or belongs to Poor/Very Poor/Severe
-            if aqi >= threshold or cat in ['Poor', 'Very Poor', 'Severe']:
-                advisory = cls.ADVISORY_MATRIX.get(cat, cls.ADVISORY_MATRIX['Poor'])
-                severity = advisory['severity']
+                # AUTO-RESOLVE check: If AQI dropped below threshold, resolve existing active alerts for this station
+                if aqi < threshold and cat not in ['Poor', 'Very Poor', 'Severe']:
+                    active_alerts = AlertNotification.objects.filter(station=station, is_active=True, is_forecast_alert=False)
+                    for alert in active_alerts:
+                        alert.is_active = False
+                        alert.resolved_at = now
+                        alert.save()
+                        logger.info(f"Auto-resolved alert for {station.name} as AQI dropped to {aqi}.")
+                elif aqi >= threshold or cat in ['Poor', 'Very Poor', 'Severe']:
+                    advisory = cls.ADVISORY_MATRIX.get(cat, cls.ADVISORY_MATRIX['Poor'])
+                    severity = advisory['severity']
 
-                title = f"{severity} AQI Alert: {station.name} ({cat})"
-                message = (
-                    f"AQI at {station.name} has reached {round(aqi, 1)} ({cat}). "
-                    f"Prominent pollutant: {latest_record.prominent_pollutant or 'Particulates'}."
-                )
+                    title = f"{severity} AQI Alert: {station.name} ({cat})"
+                    message = (
+                        f"AQI at {station.name} has reached {round(aqi, 1)} ({cat}). "
+                        f"Prominent pollutant: {latest_record.prominent_pollutant or 'Particulates'}."
+                    )
 
-                # Avoid duplicate alerts within the same 6-hour window for this station
-                recent_cutoff = timezone.now() - timezone.timedelta(hours=6)
-                existing = AlertNotification.objects.filter(
+                    recent_cutoff = now - timezone.timedelta(hours=6)
+                    existing = AlertNotification.objects.filter(
+                        station=station,
+                        is_active=True,
+                        is_forecast_alert=False,
+                        category=cat,
+                        created_at__gte=recent_cutoff
+                    ).exists()
+
+                    if not existing:
+                        alert = AlertNotification.objects.create(
+                            station=station,
+                            title=title,
+                            message=message,
+                            severity=severity,
+                            aqi_value=round(aqi, 1),
+                            category=cat,
+                            prominent_pollutant=latest_record.prominent_pollutant,
+                            health_recommendations=advisory['tips'],
+                            is_forecast_alert=False,
+                            is_active=True
+                        )
+                        created_alerts.append(alert)
+                        logger.info(f"Created Observed Alert: {alert}")
+
+            # 4. Proactive Forecast-based alerts (+3h, +6h, +24h)
+            forecast_breaches = ForecastRecord.objects.filter(
+                station=station,
+                predicted_aqi__gte=threshold,
+                horizon__in=[3, 6, 24]
+            ).order_by('horizon')
+
+            for fb in forecast_breaches:
+                f_cat = fb.category
+                f_aqi = fb.predicted_aqi
+                f_h = fb.horizon
+                advisory = cls.ADVISORY_MATRIX.get(f_cat, cls.ADVISORY_MATRIX['Poor'])
+                f_severity = advisory['severity']
+
+                f_existing = AlertNotification.objects.filter(
                     station=station,
-                    category=cat,
-                    created_at__gte=recent_cutoff
+                    is_active=True,
+                    is_forecast_alert=True,
+                    forecast_horizon_hours=f_h,
+                    created_at__gte=now - timezone.timedelta(hours=6)
                 ).exists()
 
-                if not existing:
-                    alert = AlertNotification.objects.create(
+                if not f_existing:
+                    f_title = f"{f_severity} Predicted AQI Alert: {station.name} (+{f_h}h Forecast)"
+                    f_msg = (
+                        f"Machine learning forecast predicts AQI at {station.name} will reach "
+                        f"{round(f_aqi, 1)} ({f_cat}) in {f_h} hours."
+                    )
+                    f_alert = AlertNotification.objects.create(
                         station=station,
-                        title=title,
-                        message=message,
-                        severity=severity,
-                        aqi_value=round(aqi, 1),
-                        category=cat,
-                        prominent_pollutant=latest_record.prominent_pollutant,
+                        title=f_title,
+                        message=f_msg,
+                        severity=f_severity,
+                        aqi_value=round(f_aqi, 1),
+                        category=f_cat,
                         health_recommendations=advisory['tips'],
+                        is_forecast_alert=True,
+                        forecast_horizon_hours=f_h,
                         is_active=True
                     )
-                    created_alerts.append(alert)
-                    logger.info(f"Created Alert: {alert}")
+                    created_alerts.append(f_alert)
+                    logger.info(f"Created Forecast Alert: {f_alert}")
 
         return created_alerts
 

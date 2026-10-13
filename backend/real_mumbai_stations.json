@@ -1,0 +1,335 @@
+[
+  {
+    "station_id": "OPENAQ_6927",
+    "name": "Colaba, Mumbai - MPCB",
+    "latitude": 18.91,
+    "longitude": 72.82,
+    "city": "Mumbai",
+    "state": "Maharashtra",
+    "zone_type": "RESIDENTIAL"
+  },
+  {
+    "station_id": "OPENAQ_6943",
+    "name": "Mahape, Navi Mumbai - MPCB",
+    "latitude": 19.1135051,
+    "longitude": 73.008978,
+    "city": "Mumbai",
+    "state": "Maharashtra",
+    "zone_type": "RESIDENTIAL"
+  },
+  {
+    "station_id": "OPENAQ_6945",
+    "name": "Kurla, Mumbai - MPCB",
+    "latitude": 19.0863,
+    "longitude": 72.8888,
+    "city": "Mumbai",
+    "state": "Maharashtra",
+    "zone_type": "RESIDENTIAL"
+  },
+  {
+    "station_id": "OPENAQ_6948",
+    "name": "Chhatrapati Shivaji Intl. Airport (T2), Mumbai - MPCB",
+    "latitude": 19.10078,
+    "longitude": 72.87462,
+    "city": "Mumbai",
+    "state": "Maharashtra",
+    "zone_type": "RESIDENTIAL"
+  },
+  {
+    "station_id": "OPENAQ_6956",
+    "name": "Powai, Mumbai - MPCB",
+    "latitude": 19.1375,
+    "longitude": 72.915056,
+    "city": "Mumbai",
+    "state": "Maharashtra",
+    "zone_type": "RESIDENTIAL"
+  },
+  {
+    "station_id": "OPENAQ_6959",
+    "name": "Siddharth Nagar-Worli, Mumbai - IITM",
+    "latitude": 19.000083,
+    "longitude": 72.813993,
+    "city": "Mumbai",
+    "state": "Maharashtra",
+    "zone_type": "RESIDENTIAL"
+  },
+  {
+    "station_id": "OPENAQ_6965",
+    "name": "Borivali East, Mumbai - MPCB",
+    "latitude": 19.227474,
+    "longitude": 72.864394,
+    "city": "Mumbai",
+    "state": "Maharashtra",
+    "zone_type": "RESIDENTIAL"
+  },
+  {
+    "station_id": "OPENAQ_6967",
+    "name": "Sion, Mumbai - MPCB",
+    "latitude": 19.047,
+    "longitude": 72.8746,
+    "city": "Mumbai",
+    "state": "Maharashtra",
+    "zone_type": "RESIDENTIAL"
+  },
+  {
+    "station_id": "OPENAQ_6987",
+    "name": "Vile Parle West, Mumbai - MPCB",
+    "latitude": 19.10861,
+    "longitude": 72.83622,
+    "city": "Mumbai",
+    "state": "Maharashtra",
+    "zone_type": "RESIDENTIAL"
+  },
+  {
+    "station_id": "OPENAQ_8039",
+    "name": "Mumbai",
+    "latitude": 19.07283,
+    "longitude": 72.88261,
+    "city": "Mumbai",
+    "state": "Maharashtra",
+    "zone_type": "RESIDENTIAL"
+  },
+  {
+    "station_id": "OPENAQ_11606",
+    "name": "Borivali East, Mumbai - IITM",
+    "latitude": 19.23241,
+    "longitude": 72.86895,
+    "city": "Mumbai",
+    "state": "Maharashtra",
+    "zone_type": "RESIDENTIAL"
+  },
+  {
+    "station_id": "OPENAQ_11611",
+    "name": "Malad West, Mumbai - IITM",
+    "latitude": 19.19709,
+    "longitude": 72.82204,
+    "city": "Mumbai",
+    "state": "Maharashtra",
+    "zone_type": "RESIDENTIAL"
+  },
+  {
+    "station_id": "OPENAQ_12024",
+    "name": "Chakala-Andheri East, Mumbai - IITM",
+    "latitude": 19.11074,
+    "longitude": 72.86084,
+    "city": "Mumbai",
+    "state": "Maharashtra",
+    "zone_type": "RESIDENTIAL"
+  },
+  {
+    "station_id": "OPENAQ_12039",
+    "name": "Khindipada-Bhandup West, Mumbai - IITM",
+    "latitude": 19.164394,
+    "longitude": 72.928297,
+    "city": "Mumbai",
+    "state": "Maharashtra",
+    "zone_type": "RESIDENTIAL"
+  },
+  {
+    "station_id": "OPENAQ_12040",
+    "name": "Mulund West, Mumbai - MPCB",
+    "latitude": 19.175,
+    "longitude": 72.9419,
+    "city": "Mumbai",
+    "state": "Maharashtra",
+    "zone_type": "RESIDENTIAL"
+  },
+  {
+    "station_id": "OPENAQ_12044",
+    "name": "Kandivali East, Mumbai - MPCB",
+    "latitude": 19.2058,
+    "longitude": 72.8682,
+    "city": "Mumbai",
+    "state": "Maharashtra",
+    "zone_type": "RESIDENTIAL"
+  },
+  {
+    "station_id": "OPENAQ_3409322",
+    "name": "Pimpleshwar Mandir, Thane - MPCB",
+    "latitude": 19.192056,
+    "longitude": 72.9585188,
+    "city": "Mumbai",
+    "state": "Maharashtra",
+    "zone_type": "RESIDENTIAL"
+  },
+  {
+    "station_id": "OPENAQ_3409323",
+    "name": "Worli, Mumbai - MPCB",
+    "latitude": 18.9936162,
+    "longitude": 72.8128113,
+    "city": "Mumbai",
+    "state": "Maharashtra",
+    "zone_type": "RESIDENTIAL"
+  },
+  {
+    "station_id": "OPENAQ_3409328",
+    "name": "Bandra Kurla Complex, Mumbai - IITM",
+    "latitude": 19.0627,
+    "longitude": 72.84614,
+    "city": "Mumbai",
+    "state": "Maharashtra",
+    "zone_type": "RESIDENTIAL"
+  },
+  {
+    "station_id": "OPENAQ_3409329",
+    "name": "Deonar, Mumbai - IITM",
+    "latitude": 19.04946,
+    "longitude": 72.923,
+    "city": "Mumbai",
+    "state": "Maharashtra",
+    "zone_type": "RESIDENTIAL"
+  },
+  {
+    "station_id": "OPENAQ_3409469",
+    "name": "Kasarvadavali, Thane - MPCB",
+    "latitude": 19.26777,
+    "longitude": 72.97182,
+    "city": "Mumbai",
+    "state": "Maharashtra",
+    "zone_type": "RESIDENTIAL"
+  },
+  {
+    "station_id": "OPENAQ_3409472",
+    "name": "Upvan Fort, Thane - MPCB",
+    "latitude": 19.222279,
+    "longitude": 72.957979,
+    "city": "Mumbai",
+    "state": "Maharashtra",
+    "zone_type": "RESIDENTIAL"
+  },
+  {
+    "station_id": "OPENAQ_3409476",
+    "name": "CBD Belapur, Belapur - MPCB",
+    "latitude": 19.0243902,
+    "longitude": 73.0406721,
+    "city": "Mumbai",
+    "state": "Maharashtra",
+    "zone_type": "RESIDENTIAL"
+  },
+  {
+    "station_id": "OPENAQ_3409477",
+    "name": "Kopripada-Vashi, Navi Mumbai - MPCB",
+    "latitude": 19.090337,
+    "longitude": 73.014232,
+    "city": "Mumbai",
+    "state": "Maharashtra",
+    "zone_type": "RESIDENTIAL"
+  },
+  {
+    "station_id": "OPENAQ_3409478",
+    "name": "Bhayandar West, Mira-Bhayandar - MPCB",
+    "latitude": 19.296481,
+    "longitude": 72.840923,
+    "city": "Mumbai",
+    "state": "Maharashtra",
+    "zone_type": "RESIDENTIAL"
+  },
+  {
+    "station_id": "OPENAQ_3409479",
+    "name": "Mindspace-Malad West, Mumbai - MPCB",
+    "latitude": 19.1878657,
+    "longitude": 72.8304069,
+    "city": "Mumbai",
+    "state": "Maharashtra",
+    "zone_type": "RESIDENTIAL"
+  },
+  {
+    "station_id": "OPENAQ_3409482",
+    "name": "Bandra Kurla Complex, Mumbai - MPCB",
+    "latitude": 19.065931,
+    "longitude": 72.862131,
+    "city": "Mumbai",
+    "state": "Maharashtra",
+    "zone_type": "RESIDENTIAL"
+  },
+  {
+    "station_id": "OPENAQ_3409483",
+    "name": "Chembur, Mumbai - MPCB",
+    "latitude": 19.0364585,
+    "longitude": 72.8954371,
+    "city": "Mumbai",
+    "state": "Maharashtra",
+    "zone_type": "RESIDENTIAL"
+  },
+  {
+    "station_id": "OPENAQ_3409485",
+    "name": "Gokul Nagar, Bhiwandi - MPCB",
+    "latitude": 19.309073,
+    "longitude": 73.057223,
+    "city": "Mumbai",
+    "state": "Maharashtra",
+    "zone_type": "RESIDENTIAL"
+  },
+  {
+    "station_id": "OPENAQ_3409486",
+    "name": "Kherwadi_Bandra East, Mumbai - MPCB",
+    "latitude": 19.0632143,
+    "longitude": 72.8456324,
+    "city": "Mumbai",
+    "state": "Maharashtra",
+    "zone_type": "RESIDENTIAL"
+  },
+  {
+    "station_id": "OPENAQ_3409487",
+    "name": "Sanpada, Navi Mumbai - MPCB",
+    "latitude": 19.0575752,
+    "longitude": 73.0151367,
+    "city": "Mumbai",
+    "state": "Maharashtra",
+    "zone_type": "RESIDENTIAL"
+  },
+  {
+    "station_id": "OPENAQ_3409510",
+    "name": "Byculla, Mumbai - BMC",
+    "latitude": 18.9767,
+    "longitude": 72.838,
+    "city": "Mumbai",
+    "state": "Maharashtra",
+    "zone_type": "RESIDENTIAL"
+  },
+  {
+    "station_id": "OPENAQ_3409511",
+    "name": "Shivaji Nagar, Mumbai - BMC",
+    "latitude": 19.060498,
+    "longitude": 72.923356,
+    "city": "Mumbai",
+    "state": "Maharashtra",
+    "zone_type": "RESIDENTIAL"
+  },
+  {
+    "station_id": "OPENAQ_3409512",
+    "name": "Kandivali West, Mumbai - BMC",
+    "latitude": 19.215859,
+    "longitude": 72.831718,
+    "city": "Mumbai",
+    "state": "Maharashtra",
+    "zone_type": "RESIDENTIAL"
+  },
+  {
+    "station_id": "OPENAQ_3409513",
+    "name": "Sewri, Mumbai - BMC",
+    "latitude": 19.000084,
+    "longitude": 72.85673,
+    "city": "Mumbai",
+    "state": "Maharashtra",
+    "zone_type": "RESIDENTIAL"
+  },
+  {
+    "station_id": "OPENAQ_3409514",
+    "name": "Ghatkopar, Mumbai - BMC",
+    "latitude": 19.083694,
+    "longitude": 72.920967,
+    "city": "Mumbai",
+    "state": "Maharashtra",
+    "zone_type": "RESIDENTIAL"
+  },
+  {
+    "station_id": "OPENAQ_6266795",
+    "name": "Kalu Nagar, Dombivli - MPCB",
+    "latitude": 19.2268427,
+    "longitude": 73.0788456,
+    "city": "Mumbai",
+    "state": "Maharashtra",
+    "zone_type": "RESIDENTIAL"
+  }
+]

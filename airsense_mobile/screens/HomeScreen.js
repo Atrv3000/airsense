@@ -21,11 +21,11 @@ export default function HomeScreen({ navigation }) {
   const [refreshing, setRefreshing] = useState(false);
   const { data, loading, error, refetch } = useFetch(ENDPOINTS.liveAqi);
 
-  // Current live clock state for real-time presentation
+  // Minute-interval clock state
   const [currentTime, setCurrentTime] = useState(new Date());
 
   React.useEffect(() => {
-    const timer = setInterval(() => setCurrentTime(new Date()), 1000);
+    const timer = setInterval(() => setCurrentTime(new Date()), 60000);
     return () => clearInterval(timer);
   }, []);
 
@@ -39,7 +39,6 @@ export default function HomeScreen({ navigation }) {
   const formattedClock = currentTime.toLocaleTimeString('en-IN', {
     hour: '2-digit',
     minute: '2-digit',
-    second: '2-digit',
     hour12: true,
   });
 
@@ -54,6 +53,7 @@ export default function HomeScreen({ navigation }) {
   if (!data) return null;
 
   const cityAQI = data.city_average_aqi;
+  const hasValidCityAqi = cityAQI !== null && cityAQI !== undefined && !isNaN(cityAQI);
   const cityCat = data.city_category;
   const cityColor = getAQIColor(cityCat);
   const healthMsg = getHealthAdvice(cityCat);
@@ -61,11 +61,23 @@ export default function HomeScreen({ navigation }) {
   const worst = data.worst_location;
   const cleanest = data.cleanest_location;
 
-  // Selected station reading for breakdown
-  const raw = worst || (stations.length > 0 ? stations[0] : null);
+  // Citywide mean concentrations across all active stations or fallback
+  const cityP = data.city_pollutants || {};
+  const fallbackStation = stations.find(s => s.raw_pm25 != null && s.raw_pm10 != null) || worst || stations[0];
+  const pollutants = {
+    pm25: cityP.pm25 ?? fallbackStation?.raw_pm25,
+    pm10: cityP.pm10 ?? fallbackStation?.raw_pm10,
+    no2:  cityP.no2  ?? fallbackStation?.raw_no2,
+    so2:  cityP.so2  ?? fallbackStation?.raw_so2,
+    co:   cityP.co   ?? fallbackStation?.raw_co,
+    o3:   cityP.o3   ?? fallbackStation?.raw_o3,
+    temperature: cityP.temperature ?? fallbackStation?.temperature,
+    humidity:    cityP.humidity    ?? fallbackStation?.humidity,
+    wind_speed:  cityP.wind_speed  ?? fallbackStation?.wind_speed,
+  };
 
   // Station sensor observation timestamp
-  const observedTime = raw?.recorded_at ? new Date(raw.recorded_at).toLocaleTimeString('en-IN', {
+  const observedTime = fallbackStation?.recorded_at ? new Date(fallbackStation.recorded_at).toLocaleTimeString('en-IN', {
     hour: '2-digit',
     minute: '2-digit',
     hour12: true,
@@ -108,17 +120,17 @@ export default function HomeScreen({ navigation }) {
             </View>
             <View style={styles.heroAqiRow}>
               <Text style={styles.heroAqiNumber}>
-                {cityAQI !== null ? Math.round(cityAQI) : '--'}
+                {hasValidCityAqi ? Math.round(cityAQI) : '--'}
               </Text>
               <View style={styles.heroAqiMeta}>
                 <Text style={styles.heroAqiUnit}>AQI</Text>
                 <View style={[styles.categoryBadge, { backgroundColor: cityColor }]}>
-                  <Text style={styles.categoryBadgeText}>{cityCat}</Text>
+                  <Text style={styles.categoryBadgeText}>{cityCat || 'No data'}</Text>
                 </View>
               </View>
             </View>
             <Text style={styles.heroStationCount}>
-              Aggregated across {data.monitored_stations_count} active monitoring stations
+              Mean of {data.monitored_stations_count || stations.length} active monitoring station AQIs
             </Text>
           </View>
         </View>
@@ -173,50 +185,46 @@ export default function HomeScreen({ navigation }) {
         )}
 
         {/* Detailed Pollutants Matrix */}
-        {raw && (
-          <>
-            <SectionHeader
-              title="Pollutant Concentrations"
-              subtitle={`Observed at ${raw.station_name || 'Central Mumbai'}`}
-            />
-            <View style={styles.metricsGrid}>
-              <MetricPill label="PM2.5" value={raw.raw_pm25} unit="µg/m³" statusColor="#f87171" />
-              <MetricPill label="PM10"  value={raw.raw_pm10} unit="µg/m³" statusColor="#fb923c" />
-            </View>
-            <View style={styles.metricsGrid}>
-              <MetricPill label="NO₂"  value={raw.raw_no2} unit="µg/m³" statusColor="#a78bfa" />
-              <MetricPill label="SO₂"  value={raw.raw_so2} unit="µg/m³" statusColor="#fbbf24" />
-            </View>
-            <View style={styles.metricsGrid}>
-              <MetricPill label="CO"   value={raw.raw_co}  unit="mg/m³" statusColor="#4ade80" />
-              <MetricPill label="O₃"   value={raw.raw_o3}  unit="µg/m³" statusColor="#38bdf8" />
-            </View>
+        <SectionHeader
+          title="Pollutant Concentrations"
+          subtitle="Citywide ground telemetry across reporting stations"
+        />
+        <View style={styles.metricsGrid}>
+          <MetricPill label="PM2.5" value={pollutants.pm25} unit="µg/m³" statusColor="#f87171" />
+          <MetricPill label="PM10"  value={pollutants.pm10} unit="µg/m³" statusColor="#fb923c" />
+        </View>
+        <View style={styles.metricsGrid}>
+          <MetricPill label="NO₂"  value={pollutants.no2} unit="µg/m³" statusColor="#a78bfa" />
+          <MetricPill label="SO₂"  value={pollutants.so2} unit="µg/m³" statusColor="#fbbf24" />
+        </View>
+        <View style={styles.metricsGrid}>
+          <MetricPill label="CO"   value={pollutants.co}  unit="mg/m³" statusColor="#4ade80" />
+          <MetricPill label="O₃"   value={pollutants.o3}  unit="µg/m³" statusColor="#38bdf8" />
+        </View>
 
-            {/* Surface Meteorology Summary */}
-            <View style={styles.weatherSummaryRow}>
-              <View style={styles.weatherItem}>
-                <Text style={styles.weatherLabel}>Temperature</Text>
-                <Text style={styles.weatherValue}>
-                  {raw.temperature ? raw.temperature.toFixed(1) + ' °C' : '--'}
-                </Text>
-              </View>
-              <View style={styles.weatherItemDivider} />
-              <View style={styles.weatherItem}>
-                <Text style={styles.weatherLabel}>Humidity</Text>
-                <Text style={styles.weatherValue}>
-                  {raw.humidity ? raw.humidity.toFixed(0) + ' %' : '--'}
-                </Text>
-              </View>
-              <View style={styles.weatherItemDivider} />
-              <View style={styles.weatherItem}>
-                <Text style={styles.weatherLabel}>Wind Speed</Text>
-                <Text style={styles.weatherValue}>
-                  {raw.wind_speed ? raw.wind_speed.toFixed(1) + ' km/h' : '--'}
-                </Text>
-              </View>
-            </View>
-          </>
-        )}
+        {/* Surface Meteorology Summary */}
+        <View style={styles.weatherSummaryRow}>
+          <View style={styles.weatherItem}>
+            <Text style={styles.weatherLabel}>Temperature</Text>
+            <Text style={styles.weatherValue}>
+              {pollutants.temperature != null ? Number(pollutants.temperature).toFixed(1) + ' °C' : '--'}
+            </Text>
+          </View>
+          <View style={styles.weatherItemDivider} />
+          <View style={styles.weatherItem}>
+            <Text style={styles.weatherLabel}>Relative Humidity</Text>
+            <Text style={styles.weatherValue}>
+              {pollutants.humidity != null ? Number(pollutants.humidity).toFixed(0) + ' %' : '--'}
+            </Text>
+          </View>
+          <View style={styles.weatherItemDivider} />
+          <View style={styles.weatherItem}>
+            <Text style={styles.weatherLabel}>Wind Speed</Text>
+            <Text style={styles.weatherValue}>
+              {pollutants.wind_speed != null ? Number(pollutants.wind_speed).toFixed(1) + ' km/h' : '--'}
+            </Text>
+          </View>
+        </View>
 
         {/* All Active Stations */}
         <SectionHeader

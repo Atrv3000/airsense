@@ -1,18 +1,25 @@
 /**
- * Tab 2: GIS Map Screen
- * Displays Mumbai monitoring stations and IDW spatial interpolation.
- * Uses a bulletproof, self-contained HTML renderer directly inside WebView,
- * eliminating network iframe / X-Frame-Options failures.
+ * Tab 2: Spatial GIS Map Screen
+ * Displays Mumbai monitoring stations and IDW spatial interpolation hotspots.
+ * Supports horizon toggling (Current, +3h, +6h, +24h), backend color_hex values,
+ * HOTSPOT_THRESHOLD = 201.0, and honest labelling of measured vs modelled feeds.
  */
 import React, { useState, useMemo } from 'react';
 import { View, Text, StyleSheet, ActivityIndicator, TouchableOpacity } from 'react-native';
 import { WebView } from 'react-native-webview';
 import { Ionicons } from '@expo/vector-icons';
-import { ENDPOINTS, THEME } from '../config';
+import { ENDPOINTS, THEME, HOTSPOT_THRESHOLD } from '../config';
+
+const HORIZONS = [
+  { id: 'current', label: 'Current' },
+  { id: '3', label: '+3h' },
+  { id: '6', label: '+6h' },
+  { id: '24', label: '+24h' },
+];
 
 export default function MapScreen() {
   const [key, setKey] = useState(1);
-  const [filterHotspots, setFilterHotspots] = useState(true);
+  const [horizon, setHorizon] = useState('current');
 
   // Build the complete Leaflet map HTML inline to avoid external embedding failures
   const mapHtml = useMemo(() => `
@@ -29,21 +36,24 @@ export default function MapScreen() {
 
         .pin {
             display:flex; align-items:center; justify-content:center;
-            width:40px; height:40px; border-radius:50%;
+            width:42px; height:42px; border-radius:50%;
             font-weight:800; font-size:13px; color:#ffffff;
-            border:2.5px solid #ffffff; box-shadow:0 4px 12px rgba(0,0,0,0.5);
+            border:2.5px solid #ffffff; box-shadow:0 4px 12px rgba(0,0,0,0.6);
             cursor:pointer; transition:transform 0.15s ease;
         }
         .pin.dark { color:#090d16 !important; border-color:#090d16 !important; }
-        .pin:hover { transform:scale(1.15); }
 
         .popup-card {
             background:#111827; color:#f8fafc; padding:12px;
-            border-radius:12px; min-width:200px;
+            border-radius:12px; min-width:210px;
         }
-        .popup-title { font-size:13px; font-weight:700; margin-bottom:4px; }
+        .popup-title { font-size:14px; font-weight:700; margin-bottom:2px; }
+        .popup-feed {
+            font-size:10px; font-weight:700; letter-spacing:0.3px;
+            text-transform:uppercase; margin-bottom:6px;
+        }
         .popup-badge {
-            display:inline-block; padding:3px 8px; border-radius:6px;
+            display:inline-block; padding:4px 8px; border-radius:6px;
             font-size:11px; font-weight:700; color:#fff; margin-bottom:8px;
         }
         .popup-grid {
@@ -73,7 +83,6 @@ export default function MapScreen() {
             attributionControl: false
         });
 
-        // Crisp OpenStreetMap Basemap
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
             maxZoom: 18
         }).addTo(map);
@@ -81,30 +90,61 @@ export default function MapScreen() {
         const stationsLayer = L.featureGroup().addTo(map);
         const hotspotsLayer = L.featureGroup().addTo(map);
 
-        fetch('${ENDPOINTS.mapLayers}?threshold=140')
+        const activeHorizon = '${horizon}';
+
+        fetch('${ENDPOINTS.mapLayers}?threshold=${HOTSPOT_THRESHOLD}')
             .then(r => r.json())
             .then(data => {
                 const stations = data.stations_geojson && data.stations_geojson.features || [];
-                const hotspots = data.hotspots_geojson && data.hotspots_geojson.features || [];
+                let hotspots = [];
+
+                if (activeHorizon === 'current') {
+                    hotspots = data.hotspots_geojson && data.hotspots_geojson.features || [];
+                } else {
+                    const key = 'plus_' + activeHorizon + 'h';
+                    if (data.predicted_hotspots && data.predicted_hotspots[key]) {
+                        hotspots = data.predicted_hotspots[key].features || [];
+                    }
+                }
 
                 // Render Stations
                 stations.forEach(st => {
                     const [lon, lat] = st.geometry.coordinates;
                     const p = st.properties;
-                    const aqi = Math.round(p.current_aqi || 0);
-                    const color = p.color_hex || '#0284c7';
-                    const isDark = p.category === 'Moderate' || p.category === 'Satisfactory' || color === '#FFFF00' || color === '#F59E0B';
+
+                    let displayAqi = Math.round(p.current_aqi || 0);
+                    let displayCat = p.category || 'Unknown';
+                    let displayColor = p.color_hex || '#0284c7';
+
+                    // Check if horizon forecast exists for this station
+                    if (activeHorizon !== 'current' && p.forecast_24h) {
+                        const hInt = parseInt(activeHorizon, 10);
+                        const fc = p.forecast_24h.find(f => f.step_ahead_hours === hInt);
+                        if (fc) {
+                            displayAqi = Math.round(fc.predicted_aqi);
+                            displayCat = fc.category || displayCat;
+                            displayColor = fc.color_hex || displayColor;
+                        }
+                    }
+
+                    const isDark = displayCat === 'Moderate' || displayCat === 'Satisfactory' || displayColor === '#FFFF00' || displayColor === '#F59E0B';
+                    const isMeasured = p.is_measured;
+                    const sourceText = p.source === 'CPCB_OFFICIAL' ? 'Official CPCB CAAQMS' : (isMeasured ? 'Measured (OpenAQ)' : 'Modelled (Open-Meteo)');
+                    const sourceColor = p.source === 'CPCB_OFFICIAL' ? '#10b981' : (isMeasured ? '#34d399' : '#38bdf8');
 
                     const icon = L.divIcon({
                         className: '',
-                        html: '<div class="pin ' + (isDark ? 'dark' : '') + '" style="background:' + color + '">' + aqi + '</div>',
-                        iconSize: [40, 40],
-                        iconAnchor: [20, 20]
+                        html: '<div class="pin ' + (isDark ? 'dark' : '') + '" style="background:' + displayColor + '">' + displayAqi + '</div>',
+                        iconSize: [42, 42],
+                        iconAnchor: [21, 21]
                     });
 
                     const popup = '<div class="popup-card">' +
                         '<div class="popup-title">' + p.name + '</div>' +
-                        '<div class="popup-badge" style="background:' + color + ';' + (isDark ? 'color:#090d16;' : '') + '">' + aqi + ' · ' + p.category + '</div>' +
+                        '<div class="popup-feed" style="color:' + sourceColor + '">' + sourceText + '</div>' +
+                        '<div class="popup-badge" style="background:' + displayColor + ';' + (isDark ? 'color:#090d16;' : '') + '">' +
+                            (activeHorizon === 'current' ? '' : '+' + activeHorizon + 'h Forecast: ') + displayAqi + ' · ' + displayCat +
+                        '</div>' +
                         '<div class="popup-grid">' +
                             '<div class="popup-cell">PM2.5<b>' + (p.pm25 != null ? p.pm25 : '--') + ' µg</b></div>' +
                             '<div class="popup-cell">PM10<b>' + (p.pm10 != null ? p.pm10 : '--') + ' µg</b></div>' +
@@ -116,7 +156,7 @@ export default function MapScreen() {
                     L.marker([lat, lon], { icon }).bindPopup(popup).addTo(stationsLayer);
                 });
 
-                // Render Land-Bounded Hotspots
+                // Render Land-Bounded Hotspots (AQI >= 201)
                 const pts = hotspots.filter(h => h.geometry && h.geometry.type === 'Point');
                 pts.forEach(pt => {
                     const [lon, lat] = pt.geometry.coordinates;
@@ -127,34 +167,34 @@ export default function MapScreen() {
                         radius: 1200,
                         stroke: false,
                         fillColor: color,
-                        fillOpacity: 0.12,
+                        fillOpacity: 0.14,
                         interactive: false
                     }).addTo(hotspotsLayer);
 
                     L.circle([lat, lon], {
                         radius: 650,
                         color: color,
-                        weight: 1,
-                        opacity: 0.4,
+                        weight: 1.5,
+                        opacity: 0.5,
                         fillColor: color,
-                        fillOpacity: 0.25,
+                        fillOpacity: 0.3,
                         interactive: true
-                    }).bindTooltip('Interpolated AQI: ' + Math.round(p.interpolated_aqi) + ' (' + p.category + ')').addTo(hotspotsLayer);
+                    }).bindTooltip('Hotspot Zone: AQI ' + Math.round(p.interpolated_aqi) + ' (' + p.category + ')').addTo(hotspotsLayer);
                 });
             })
             .catch(err => console.error('Map loading error:', err));
     </script>
 </body>
 </html>
-  `, [key]);
+  `, [key, horizon]);
 
   return (
     <View style={styles.container}>
-      {/* Sleek Mobile Control Header */}
+      {/* Mobile Control Header */}
       <View style={styles.header}>
         <View>
           <Text style={styles.headerTitle}>Spatial GIS Map</Text>
-          <Text style={styles.headerSubtitle}>Real-time ground sensors and IDW hotspot contours</Text>
+          <Text style={styles.headerSubtitle}>Ground sensor pins & IDW hotspot zones (AQI ≥ 201)</Text>
         </View>
         <TouchableOpacity
           style={styles.reloadBtn}
@@ -166,10 +206,32 @@ export default function MapScreen() {
         </TouchableOpacity>
       </View>
 
+      {/* Horizon Selector Bar */}
+      <View style={styles.horizonBar}>
+        <Text style={styles.horizonLabel}>Horizon:</Text>
+        <View style={styles.horizonButtons}>
+          {HORIZONS.map((h) => {
+            const active = horizon === h.id;
+            return (
+              <TouchableOpacity
+                key={h.id}
+                style={[styles.horizonBtn, active && styles.horizonBtnActive]}
+                onPress={() => setHorizon(h.id)}
+                activeOpacity={0.7}
+              >
+                <Text style={[styles.horizonBtnText, active && styles.horizonBtnTextActive]}>
+                  {h.label}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+      </View>
+
       {/* Embedded Map Canvas */}
       <View style={styles.mapWrapper}>
         <WebView
-          key={key}
+          key={`${key}-${horizon}`}
           source={{ html: mapHtml }}
           style={styles.webview}
           javaScriptEnabled={true}
@@ -187,7 +249,10 @@ export default function MapScreen() {
 
       {/* Legend Footer */}
       <View style={styles.legendBar}>
-        <Text style={styles.legendLabel}>CPCB Scale</Text>
+        <View style={styles.legendHeaderRow}>
+          <Text style={styles.legendLabel}>CPCB NAQI Scale</Text>
+          <Text style={styles.legendSubtext}>Hotspots trigger at Poor (≥ 201)</Text>
+        </View>
         <View style={styles.legendScale}>
           <View style={[styles.legendBlock, { backgroundColor: '#15803d' }]} />
           <View style={[styles.legendBlock, { backgroundColor: '#65a30d' }]} />
@@ -198,7 +263,10 @@ export default function MapScreen() {
         </View>
         <View style={styles.legendMarks}>
           <Text style={styles.legendMarkText}>0 Good</Text>
+          <Text style={styles.legendMarkText}>100 Satisfactory</Text>
           <Text style={styles.legendMarkText}>200 Moderate</Text>
+          <Text style={styles.legendMarkText}>300 Poor</Text>
+          <Text style={styles.legendMarkText}>400 Very Poor</Text>
           <Text style={styles.legendMarkText}>500 Severe</Text>
         </View>
       </View>
@@ -214,13 +282,11 @@ const styles = StyleSheet.create({
   header: {
     paddingHorizontal: 16,
     paddingTop: 16,
-    paddingBottom: 10,
+    paddingBottom: 8,
     backgroundColor: THEME.bg,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    borderBottomWidth: 1,
-    borderBottomColor: THEME.border,
   },
   headerTitle: {
     color: THEME.textPrimary,
@@ -249,6 +315,49 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '600',
   },
+  horizonBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    backgroundColor: THEME.surface,
+    borderTopWidth: 1,
+    borderBottomWidth: 1,
+    borderColor: THEME.border,
+    gap: 10,
+  },
+  horizonLabel: {
+    color: THEME.textMuted,
+    fontSize: 11,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+  },
+  horizonButtons: {
+    flexDirection: 'row',
+    gap: 6,
+    flex: 1,
+  },
+  horizonBtn: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 6,
+    backgroundColor: THEME.surfaceElevated,
+    borderWidth: 1,
+    borderColor: THEME.border,
+  },
+  horizonBtnActive: {
+    backgroundColor: THEME.primary,
+    borderColor: THEME.primary,
+  },
+  horizonBtnText: {
+    color: THEME.textSecondary,
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  horizonBtnTextActive: {
+    color: '#ffffff',
+    fontWeight: '700',
+  },
   mapWrapper: {
     flex: 1,
     backgroundColor: THEME.bg,
@@ -276,12 +385,21 @@ const styles = StyleSheet.create({
     borderTopColor: THEME.border,
     gap: 6,
   },
+  legendHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
   legendLabel: {
     color: THEME.textMuted,
     fontSize: 10,
     fontWeight: '600',
     textTransform: 'uppercase',
     letterSpacing: 0.5,
+  },
+  legendSubtext: {
+    color: THEME.textMuted,
+    fontSize: 10,
   },
   legendScale: {
     flexDirection: 'row',
@@ -299,6 +417,6 @@ const styles = StyleSheet.create({
   },
   legendMarkText: {
     color: THEME.textMuted,
-    fontSize: 10,
+    fontSize: 9,
   },
 });

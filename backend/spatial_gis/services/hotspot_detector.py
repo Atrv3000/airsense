@@ -1,11 +1,11 @@
 """
 Hotspot Detection & GeoJSON Generation Service for Mumbai Region.
-Classifies spatial grid cells into severity tiers based on CPCB thresholds
-and serializes into standard RFC 7946 GeoJSON.
+Classifies spatial grid cells based on universal HOTSPOT_THRESHOLD (AQI >= 201).
 """
 
 from typing import List, Dict, Any
 from aqi_engine.services.cpcb_calculator import CPCBCalculator
+from ..constants import HOTSPOT_THRESHOLD
 from .idw_interpolator import IDWInterpolator
 
 class HotspotDetector:
@@ -17,7 +17,7 @@ class HotspotDetector:
     def detect_hotspots(
         cls,
         known_stations: List[Dict[str, Any]],
-        threshold: float = 200.0,
+        threshold: float = HOTSPOT_THRESHOLD,
         resolution: int = 25
     ) -> Dict[str, Any]:
         """
@@ -54,7 +54,7 @@ class HotspotDetector:
                         "interpolated_aqi": aqi,
                         "category": category,
                         "color_hex": color,
-                        "severity": "CRITICAL" if aqi >= 300 else "ELEVATED",
+                        "severity": "CRITICAL" if aqi >= 301 else "WARNING",
                         "is_hotspot": True
                     }
                 }
@@ -71,7 +71,7 @@ class HotspotDetector:
                         [max_lon, min_lat],
                         [max_lon, max_lat],
                         [min_lon, max_lat],
-                        [min_lon, min_lat]  # Closing loop
+                        [min_lon, min_lat]
                     ]
                 ]
 
@@ -86,7 +86,7 @@ class HotspotDetector:
                         "interpolated_aqi": aqi,
                         "category": category,
                         "color_hex": color,
-                        "fill_opacity": 0.35 if aqi >= 300 else 0.22,
+                        "fill_opacity": 0.35 if aqi >= 301 else 0.22,
                         "stroke_color": color
                     }
                 }
@@ -118,8 +118,7 @@ class HotspotDetector:
         resolution: int = 25
     ) -> Dict[str, Any]:
         """
-        Emits the entire continuous Mumbai grid as a GeoJSON FeatureCollection
-        (allows mobile map to render a complete interpolated surface).
+        Emits the continuous Mumbai land grid as a GeoJSON FeatureCollection.
         """
         grid_points = IDWInterpolator.interpolate_grid(known_stations, resolution=resolution, power=2.0)
         features = []
@@ -138,7 +137,7 @@ class HotspotDetector:
                     "interpolated_aqi": aqi,
                     "category": category,
                     "color_hex": color,
-                    "is_hotspot": aqi >= 200.0
+                    "is_hotspot": aqi >= HOTSPOT_THRESHOLD
                 }
             })
 

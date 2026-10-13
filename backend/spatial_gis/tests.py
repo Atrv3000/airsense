@@ -8,6 +8,7 @@ from core.models import MonitoringStation
 from ingestion.models import RawMeasurement
 from aqi_engine.models import AQIRecord
 from aqi_engine.services.aqi_service import AQIService
+from spatial_gis.constants import HOTSPOT_THRESHOLD
 from spatial_gis.services.idw_interpolator import IDWInterpolator
 from spatial_gis.services.hotspot_detector import HotspotDetector
 
@@ -21,7 +22,6 @@ class SpatialGISIDWTestCase(TestCase):
 
         dist = IDWInterpolator.haversine_distance_matrix(lats1, lons1, lats2, lons2)
         self.assertEqual(dist.shape, (1, 1))
-        # Great circle distance should be between 17 and 20 km
         self.assertTrue(17.0 <= dist[0, 0] <= 20.0)
 
         # Distance to self must be 0
@@ -52,7 +52,7 @@ class SpatialGISIDWTestCase(TestCase):
             {'latitude': 19.0522, 'longitude': 72.8995, 'aqi': 350.0},
             {'latitude': 18.9067, 'longitude': 72.8147, 'aqi': 45.0},
         ]
-        geojson = HotspotDetector.detect_hotspots(stations, threshold=200.0, resolution=15)
+        geojson = HotspotDetector.detect_hotspots(stations, threshold=HOTSPOT_THRESHOLD, resolution=15)
         self.assertEqual(geojson["type"], "FeatureCollection")
         self.assertIn("features", geojson)
         self.assertIn("metadata", geojson)
@@ -65,16 +65,17 @@ class SpatialGISIDWTestCase(TestCase):
                 self.assertTrue(72.75 <= lon <= 73.10)
                 self.assertTrue(18.89 <= lat <= 19.30)
 
+
 class SpatialGISAPITestCase(TestCase):
     def setUp(self):
         self.client = APIClient()
         self.tz = ZoneInfo("Asia/Kolkata")
         self.station1 = MonitoringStation.objects.create(
-            station_id="TEST_HOTSPOT_1",
-            name="Test Hotspot Station",
-            latitude=19.0522,
-            longitude=72.8995,
-            zone_type="INDUSTRIAL"
+            station_id="OPENAQ_6948",
+            name="Chhatrapati Shivaji Intl. Airport (T2), Mumbai - MPCB",
+            latitude=19.10078,
+            longitude=72.87462,
+            zone_type="COMMERCIAL"
         )
         now = datetime.now(self.tz)
         raw = RawMeasurement.objects.create(
@@ -85,12 +86,13 @@ class SpatialGISAPITestCase(TestCase):
             no2=50.0,
             so2=20.0,
             co=1.5,
-            o3=60.0
+            o3=60.0,
+            source="OPENAQ_MEASURED"
         )
         AQIService.calculate_for_measurement(raw)
 
     def test_hotspots_api_endpoint(self):
-        response = self.client.get('/api/v1/gis/hotspots/?threshold=150&resolution=15')
+        response = self.client.get(f'/api/v1/gis/hotspots/?threshold={HOTSPOT_THRESHOLD}&resolution=15')
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data.get("type"), "FeatureCollection")
         self.assertIn("features", response.data)
@@ -99,18 +101,27 @@ class SpatialGISAPITestCase(TestCase):
         response = self.client.get('/api/v1/gis/grid/?resolution=12')
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data.get("type"), "FeatureCollection")
-        self.assertEqual(len(response.data.get("features", [])), 144)
+        # Land-masked cells within Mumbai boundary
+        self.assertGreater(len(response.data.get("features", [])), 0)
 
     def test_unified_map_layers_api(self):
-        response = self.client.get('/api/v1/gis/map-layers/?threshold=150')
+        response = self.client.get(f'/api/v1/gis/map-layers/?threshold={HOTSPOT_THRESHOLD}')
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertIn("stations_geojson", response.data)
         self.assertIn("hotspots_geojson", response.data)
+        self.assertIn("predicted_hotspots", response.data)
         self.assertIn("map_config", response.data)
         self.assertIn("legend", response.data)
+
+        # Check measured vs modelled field on station feature
+        stations = response.data["stations_geojson"].get("features", [])
+        if stations:
+            props = stations[0]["properties"]
+            self.assertIn("source", props)
+            self.assertIn("is_measured", props)
 
     def test_interactive_map_html_view(self):
         response = self.client.get('/map/')
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertIn(b'AirSense Mumbai', response.content)
+        self.assertIn(b'AirSense', response.content)
         self.assertIn(b'leaflet.js', response.content)

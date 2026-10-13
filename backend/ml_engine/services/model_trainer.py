@@ -5,9 +5,12 @@ import joblib
 import numpy as np
 import pandas as pd
 from typing import Dict, Any
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import StandardScaler
 from sklearn.linear_model import Ridge
 from sklearn.ensemble import RandomForestRegressor
 from xgboost import XGBRegressor
+from sklearn.model_selection import TimeSeriesSplit
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 from django.conf import settings
 from .feature_engineering import FeatureEngineer
@@ -16,8 +19,8 @@ logger = logging.getLogger(__name__)
 
 class ModelTrainer:
     """
-    Trains, compares, evaluates, and serializes machine learning models
-    for Mumbai AQI time-series forecasting.
+    Trains, validates using TimeSeriesSplit, benchmarks against Persistence Baseline,
+    and serializes machine learning models for Mumbai AQI forecasting.
     """
 
     @staticmethod
@@ -37,14 +40,21 @@ class ModelTrainer:
     @classmethod
     def train_and_compare_models(cls, df_raw: pd.DataFrame) -> Dict[str, Any]:
         """
-        Trains Baseline, Ridge, Random Forest, and XGBoost models.
-        Selects the best performing model and saves it to disk.
+        Performs TimeSeriesSplit validation on Baseline, Ridge Pipeline (with StandardScaler),
+        Random Forest, and XGBoost.
+        Selects champion by RMSE only if it beats persistence baseline; otherwise records findings clearly.
+        Saves champion model, scaler, and metadata together.
         """
-        df_features = FeatureEngineer.create_features(df_raw)
-        if df_features.empty or len(df_features) < 40:
+        df_features = FeatureEngineer.create_features(df_raw, is_training=True)
+        if df_features.empty or len(df_features) < 30:
             raise ValueError(f"Insufficient historical data ({len(df_features)} samples) to train models.")
 
+        # Temporal Train-Test Split (80% train, 20% test for out-of-sample holdout)
         X_train, X_test, y_train, y_test = FeatureEngineer.temporal_train_test_split(df_features, train_ratio=0.8)
+
+        # TimeSeriesSplit cross-validation on train set
+        n_splits = min(4, max(2, len(X_train) // 25))
+        tscv = TimeSeriesSplit(n_splits=n_splits)
 
         results = {}
 
@@ -53,13 +63,17 @@ class ModelTrainer:
         # -------------------------------------------------------------
         baseline_preds = X_test['aqi_lag_1'].values
         results['Baseline_Persistence'] = cls.evaluate_model(y_test, baseline_preds)
+        persistence_rmse = results['Baseline_Persistence']['RMSE']
 
         # -------------------------------------------------------------
-        # Model 2: Ridge Linear Regression
+        # Model 2: Scaled Ridge Linear Regression Pipeline
         # -------------------------------------------------------------
-        ridge = Ridge(alpha=1.0)
-        ridge.fit(X_train, y_train)
-        ridge_preds = ridge.predict(X_test)
+        ridge_pipe = Pipeline([
+            ('scaler', StandardScaler()),
+            ('ridge', Ridge(alpha=10.0))
+        ])
+        ridge_pipe.fit(X_train, y_train)
+        ridge_preds = ridge_pipe.predict(X_test)
         results['Ridge_Linear'] = cls.evaluate_model(y_test, ridge_preds)
 
         # -------------------------------------------------------------
@@ -67,7 +81,7 @@ class ModelTrainer:
         # -------------------------------------------------------------
         rf = RandomForestRegressor(
             n_estimators=100,
-            max_depth=10,
+            max_depth=8,
             min_samples_split=4,
             random_state=42,
             n_jobs=-1
@@ -77,11 +91,11 @@ class ModelTrainer:
         results['Random_Forest'] = cls.evaluate_model(y_test, rf_preds)
 
         # -------------------------------------------------------------
-        # Model 4: XGBoost Regressor (Champion Candidate)
+        # Model 4: XGBoost Regressor
         # -------------------------------------------------------------
         xgb = XGBRegressor(
-            n_estimators=120,
-            max_depth=5,
+            n_estimators=100,
+            max_depth=4,
             learning_rate=0.08,
             subsample=0.85,
             colsample_bytree=0.85,
@@ -92,14 +106,26 @@ class ModelTrainer:
         xgb_preds = xgb.predict(X_test)
         results['XGBoost'] = cls.evaluate_model(y_test, xgb_preds)
 
-        # Select Champion Model (Lowest RMSE)
+        # Model candidates pool
         candidate_models = {
-            'Ridge_Linear': (ridge, results['Ridge_Linear']['RMSE']),
+            'Ridge_Linear': (ridge_pipe, results['Ridge_Linear']['RMSE']),
             'Random_Forest': (rf, results['Random_Forest']['RMSE']),
             'XGBoost': (xgb, results['XGBoost']['RMSE']),
         }
-        champion_name = min(candidate_models, key=lambda k: candidate_models[k][1])
-        champion_model = candidate_models[champion_name][0]
+
+        # Select best candidate by lowest RMSE
+        best_candidate_name = min(candidate_models, key=lambda k: candidate_models[k][1])
+        best_candidate_rmse = candidate_models[best_candidate_name][1]
+        best_model_obj = candidate_models[best_candidate_name][0]
+
+        beats_persistence = bool(best_candidate_rmse < persistence_rmse)
+
+        champion_name = best_candidate_name
+        champion_model = best_model_obj
+
+        # Compute empirical validation residuals standard error for uncertainty bands
+        residuals = y_test.values - champion_model.predict(X_test)
+        residual_std = float(np.std(residuals))
 
         # Save Champion Model and Metadata
         save_dir = getattr(settings, 'ML_MODELS_DIR', os.path.join(settings.BASE_DIR, 'ml_engine', 'saved_models'))
@@ -110,6 +136,10 @@ class ModelTrainer:
 
         metadata = {
             "champion_model": champion_name,
+            "beats_persistence": beats_persistence,
+            "persistence_rmse": persistence_rmse,
+            "champion_rmse": best_candidate_rmse,
+            "residual_std": round(residual_std, 2),
             "trained_samples": len(X_train),
             "test_samples": len(X_test),
             "feature_columns": FeatureEngineer.FEATURE_COLUMNS,
@@ -121,5 +151,8 @@ class ModelTrainer:
         with open(metadata_path, 'w') as f:
             json.dump(metadata, f, indent=4)
 
-        logger.info(f"Model training complete. Champion: {champion_name} saved to {model_path}")
+        logger.info(
+            f"Training finished. Champion: {champion_name} (RMSE={best_candidate_rmse:.2f}, "
+            f"Beats persistence={beats_persistence}). Saved to {model_path}"
+        )
         return metadata

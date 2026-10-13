@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import AlertNotification, UserAlertSubscription
+from .models import AlertNotification, DeviceToken
 
 class AlertNotificationSerializer(serializers.ModelSerializer):
     station_name = serializers.CharField(source='station.name', read_only=True, default="Mumbai City")
@@ -17,23 +17,24 @@ class AlertNotificationSerializer(serializers.ModelSerializer):
             'aqi_value',
             'category',
             'prominent_pollutant',
+            'is_forecast_alert',
+            'forecast_horizon_hours',
             'health_recommendations',
             'created_at',
+            'resolved_at',
             'is_active',
         ]
 
 
-class UserAlertSubscriptionSerializer(serializers.ModelSerializer):
+class DeviceTokenSerializer(serializers.ModelSerializer):
     class Meta:
-        model = UserAlertSubscription
+        model = DeviceToken
         fields = [
             'id',
-            'email',
-            'phone_number',
+            'token',
+            'platform',
             'station',
-            'threshold_aqi',
-            'notify_sms',
-            'notify_email',
             'is_active',
             'created_at',
+            'last_seen_at',
         ]

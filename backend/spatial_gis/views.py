@@ -27,6 +27,8 @@ def get_latest_station_readings():
 
     return stations_data
 
+from .constants import HOTSPOT_THRESHOLD
+
 class UnifiedMapLayersAPIView(APIView):
     """
     Consolidated GIS endpoint for mobile & web clients:
@@ -34,11 +36,11 @@ class UnifiedMapLayersAPIView(APIView):
     IDW hotspot polygons/points, and CPCB legend metadata in a single request.
     """
     def get(self, request):
-        threshold_param = request.query_params.get('threshold', 200.0)
+        threshold_param = request.query_params.get('threshold', HOTSPOT_THRESHOLD)
         try:
             threshold = float(threshold_param)
         except ValueError:
-            threshold = 200.0
+            threshold = HOTSPOT_THRESHOLD
 
         layers = MapLayerService.get_unified_map_layers(hotspot_threshold=threshold)
         return Response(layers, status=status.HTTP_200_OK)
@@ -47,17 +49,17 @@ class HotspotsGeoJSONAPIView(APIView):
     """
     Returns detected air pollution hotspots across Mumbai as a standard GeoJSON FeatureCollection.
     Query parameters:
-    - threshold: AQI threshold to qualify as hotspot (default: 200.0)
+    - threshold: AQI threshold to qualify as hotspot (default: HOTSPOT_THRESHOLD = 201.0)
     - resolution: Spatial grid resolution, e.g. 25 for 25x25 (default: 25)
     """
     def get(self, request):
-        threshold_param = request.query_params.get('threshold', 200.0)
+        threshold_param = request.query_params.get('threshold', HOTSPOT_THRESHOLD)
         resolution_param = request.query_params.get('resolution', 25)
 
         try:
             threshold = float(threshold_param)
         except ValueError:
-            threshold = 200.0
+            threshold = HOTSPOT_THRESHOLD
 
         try:
             resolution = int(resolution_param)
