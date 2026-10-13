@@ -19,9 +19,8 @@ class AirQualityClient:
     OPENAQ_API_KEY = os.getenv("OPENAQ_API_KEY", "")
     OPEN_METEO_AQ_URL = "https://air-quality-api.open-meteo.com/v1/air-quality"
 
-    # Known OpenAQ v3 Location IDs mapped to coordinates/stations
     # 6927: Colaba MPCB, 6945: Kurla MPCB, 6959: Worli IITM, 6965: Borivali East MPCB,
-    # 6967: Sion MPCB, 6948: Airport T2, 6956: Powai, 6943: Mahape, 11604: Deonar
+    # 6967: Sion MPCB, 6948: Airport T2 / Vile Parle, 6956: Powai, 6943: Mahape, 11604: Deonar
     STATION_OPENAQ_MAP = {
         "MUM_COLABA": 6927,
         "MUM_WORLI": 6959,
@@ -29,7 +28,7 @@ class AirQualityClient:
         "MUM_BORIVALI": 6965,
         "MUM_DEONAR": 11604,
         "MUM_BKC": 11602,      # BKC IITM
-        "MUM_VILEPARLE": 6987, # Vile Parle West
+        "MUM_VILEPARLE": 6948, # Airport T2 / Vile Parle Terminal
         "MUM_CHEMBUR": 6967,   # Sion / Chembur corridor
         "MUM_MULUND": 5593,    # Thane / Mulund border
         "MUM_SANPADA": 6943,   # Mahape / Navi Mumbai
@@ -67,6 +66,11 @@ class AirQualityClient:
                             for item in items:
                                 p_name = sensors_map.get(item.get("sensorsId"))
                                 val = item.get("value")
+                                # Skip old abandoned readings (e.g. from 2022 or older)
+                                dt_local = item.get("datetime", {}).get("local", "")
+                                if dt_local and dt_local < "2026-01-01":
+                                    continue
+
                                 if p_name and val is not None and p_name not in readings:
                                     readings[p_name] = float(val)
 
