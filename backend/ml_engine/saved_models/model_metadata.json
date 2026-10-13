@@ -1,7 +1,7 @@
 {
-    "champion_model": "Ridge_Linear",
-    "trained_samples": 556,
-    "test_samples": 139,
+    "champion_model": "Random_Forest",
+    "trained_samples": 748,
+    "test_samples": 187,
     "feature_columns": [
         "hour_sin",
         "hour_cos",
@@ -27,29 +27,29 @@
     ],
     "metrics_comparison": {
         "Baseline_Persistence": {
-            "MAE": 24.61,
-            "RMSE": 47.13,
-            "R2_Score": 0.3446
+            "MAE": 27.25,
+            "RMSE": 58.74,
+            "R2_Score": 0.5743
         },
         "Ridge_Linear": {
-            "MAE": 21.52,
-            "RMSE": 36.48,
-            "R2_Score": 0.6073
+            "MAE": 28.02,
+            "RMSE": 53.32,
+            "R2_Score": 0.6493
         },
         "Random_Forest": {
-            "MAE": 29.48,
-            "RMSE": 39.25,
-            "R2_Score": 0.5454
+            "MAE": 29.99,
+            "RMSE": 45.58,
+            "R2_Score": 0.7437
         },
         "XGBoost": {
-            "MAE": 30.54,
-            "RMSE": 41.38,
-            "R2_Score": 0.4948
+            "MAE": 31.48,
+            "RMSE": 47.21,
+            "R2_Score": 0.7251
         }
     },
     "champion_metrics": {
-        "MAE": 21.52,
-        "RMSE": 36.48,
-        "R2_Score": 0.6073
+        "MAE": 29.99,
+        "RMSE": 45.58,
+        "R2_Score": 0.7437
     }
 }

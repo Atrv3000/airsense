@@ -27,17 +27,20 @@ class AQIPredictor:
         """
         Loads the serialized model and its metadata from disk (singleton pattern).
         """
-        if cls._model is None or cls._metadata is None:
-            save_dir = getattr(settings, 'ML_MODELS_DIR', os.path.join(settings.BASE_DIR, 'ml_engine', 'saved_models'))
-            model_path = os.path.join(save_dir, 'champion_aqi_model.joblib')
-            metadata_path = os.path.join(save_dir, 'model_metadata.json')
+        save_dir = getattr(settings, 'ML_MODELS_DIR', os.path.join(settings.BASE_DIR, 'ml_engine', 'saved_models'))
+        model_path = os.path.join(save_dir, 'champion_aqi_model.joblib')
+        metadata_path = os.path.join(save_dir, 'model_metadata.json')
 
-            if not os.path.exists(model_path) or not os.path.exists(metadata_path):
-                raise FileNotFoundError("Model artifacts not found. Please run model training first.")
+        if not os.path.exists(model_path) or not os.path.exists(metadata_path):
+            raise FileNotFoundError("Model artifacts not found. Please run model training first.")
 
+        # Always check mtime so retrained champion models take effect immediately without needing server reboot
+        mtime = os.path.getmtime(model_path)
+        if cls._model is None or getattr(cls, '_last_mtime', 0) != mtime:
             cls._model = joblib.load(model_path)
             with open(metadata_path, 'r') as f:
                 cls._metadata = json.load(f)
+            cls._last_mtime = mtime
 
         return cls._model, cls._metadata
 
