@@ -40,6 +40,27 @@ export default function ForecastScreen() {
   const [selectedStation, setSelectedStation] = useState('MUM_BKC');
   const [refreshing, setRefreshing] = useState(false);
 
+  // Live real-time clock
+  const [currentTime, setCurrentTime] = useState(new Date());
+
+  React.useEffect(() => {
+    const timer = setInterval(() => setCurrentTime(new Date()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const formattedDate = currentTime.toLocaleDateString('en-IN', {
+    weekday: 'short',
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+  });
+
+  const formattedClock = currentTime.toLocaleTimeString('en-IN', {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: true,
+  });
+
   const histUrl = `${ENDPOINTS.historicalAqi}?station_id=${selectedStation}&limit=24`;
   const predUrl = `${ENDPOINTS.predict}?station_id=${selectedStation}&hours=24`;
   const metricsUrl = ENDPOINTS.modelMetrics;
@@ -90,10 +111,16 @@ export default function ForecastScreen() {
           />
         }
       >
-        {/* Header Title */}
+        {/* Header Title with Real Date & Clock */}
         <View style={styles.headerBar}>
-          <Text style={styles.headerSubtitle}>Predictive Modeling</Text>
-          <Text style={styles.headerTitle}>Forecast & Analytics</Text>
+          <View>
+            <Text style={styles.headerSubtitle}>{formattedDate}</Text>
+            <Text style={styles.headerTitle}>Forecast & Analytics</Text>
+          </View>
+          <View style={styles.clockPill}>
+            <View style={styles.clockDot} />
+            <Text style={styles.clockText}>{formattedClock}</Text>
+          </View>
         </View>
 
         {/* Station Filter Tabs */}
@@ -144,21 +171,26 @@ export default function ForecastScreen() {
               withShadow={false}
             />
 
-            {/* Hourly Horizon Horizontal List */}
+            {/* Hourly Horizon Horizontal List with Real Target Time */}
             <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 14 }}>
               <View style={styles.forecastHourRow}>
-                {forecasts.slice(0, 8).map((fc, i) => (
-                  <View key={i} style={[styles.forecastHourCard, { borderLeftColor: fc.color_hex, borderLeftWidth: 3 }]}>
-                    <Text style={styles.fhHour}>+{fc.step_ahead_hours}h</Text>
-                    <Text style={[styles.fhAqi, { color: fc.color_hex }]}>
-                      {Math.round(fc.predicted_aqi)}
-                    </Text>
-                    <Text style={styles.fhCat}>{fc.category?.split(' ')[0]}</Text>
-                    <Text style={styles.fhBound}>
-                      {Math.round(fc.confidence_lower)}–{Math.round(fc.confidence_upper)}
-                    </Text>
-                  </View>
-                ))}
+                {forecasts.slice(0, 8).map((fc, i) => {
+                  const targetD = fc.target_timestamp ? new Date(fc.target_timestamp) : null;
+                  const timeStr = targetD ? targetD.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true }) : `+${fc.step_ahead_hours}h`;
+
+                  return (
+                    <View key={i} style={[styles.forecastHourCard, { borderLeftColor: fc.color_hex, borderLeftWidth: 3 }]}>
+                      <Text style={styles.fhHour}>{timeStr}</Text>
+                      <Text style={[styles.fhAqi, { color: fc.color_hex }]}>
+                        {Math.round(fc.predicted_aqi)}
+                      </Text>
+                      <Text style={styles.fhCat}>{fc.category?.split(' ')[0]}</Text>
+                      <Text style={styles.fhBound}>
+                        {Math.round(fc.confidence_lower)}–{Math.round(fc.confidence_upper)}
+                      </Text>
+                    </View>
+                  );
+                })}
               </View>
             </ScrollView>
           </View>
@@ -261,6 +293,31 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingTop: 16,
     paddingBottom: 6,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  clockPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: THEME.surface,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: THEME.border,
+  },
+  clockDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: THEME.primaryLight,
+  },
+  clockText: {
+    color: THEME.textSecondary,
+    fontSize: 11,
+    fontWeight: '600',
   },
   headerSubtitle: {
     color: THEME.textMuted,

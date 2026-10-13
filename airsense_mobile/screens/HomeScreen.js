@@ -21,6 +21,28 @@ export default function HomeScreen({ navigation }) {
   const [refreshing, setRefreshing] = useState(false);
   const { data, loading, error, refetch } = useFetch(ENDPOINTS.liveAqi);
 
+  // Current live clock state for real-time presentation
+  const [currentTime, setCurrentTime] = useState(new Date());
+
+  React.useEffect(() => {
+    const timer = setInterval(() => setCurrentTime(new Date()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const formattedDate = currentTime.toLocaleDateString('en-IN', {
+    weekday: 'short',
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+  });
+
+  const formattedClock = currentTime.toLocaleTimeString('en-IN', {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: true,
+  });
+
   const onRefresh = async () => {
     setRefreshing(true);
     await refetch();
@@ -42,6 +64,13 @@ export default function HomeScreen({ navigation }) {
   // Selected station reading for breakdown
   const raw = worst || (stations.length > 0 ? stations[0] : null);
 
+  // Station sensor observation timestamp
+  const observedTime = raw?.recorded_at ? new Date(raw.recorded_at).toLocaleTimeString('en-IN', {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: true,
+  }) : null;
+
   return (
     <View style={styles.container}>
       <StatusBar barStyle="light-content" backgroundColor={THEME.bg} />
@@ -56,22 +85,27 @@ export default function HomeScreen({ navigation }) {
           />
         }
       >
-        {/* Top App Header */}
+        {/* Top App Header with Real Date & Live Clock */}
         <View style={styles.headerBar}>
           <View>
-            <Text style={styles.headerSubtitle}>Regional Environmental Monitoring</Text>
+            <Text style={styles.headerSubtitle}>{formattedDate}</Text>
             <Text style={styles.headerTitle}>Greater Mumbai</Text>
           </View>
           <View style={styles.liveIndicator}>
             <View style={styles.liveDot} />
-            <Text style={styles.liveText}>Live</Text>
+            <Text style={styles.liveText}>{formattedClock}</Text>
           </View>
         </View>
 
         {/* Primary City Index Card */}
         <View style={styles.heroCard}>
           <View style={styles.heroLeft}>
-            <Text style={styles.heroTag}>Citywide Air Quality</Text>
+            <View style={styles.heroTagRow}>
+              <Text style={styles.heroTag}>Citywide Air Quality</Text>
+              {observedTime && (
+                <Text style={styles.heroObservedTime}>Sync: {observedTime}</Text>
+              )}
+            </View>
             <View style={styles.heroAqiRow}>
               <Text style={styles.heroAqiNumber}>
                 {cityAQI !== null ? Math.round(cityAQI) : '--'}
@@ -268,12 +302,22 @@ const styles = StyleSheet.create({
   heroLeft: {
     gap: 6,
   },
+  heroTagRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
   heroTag: {
     color: THEME.textMuted,
     fontSize: 12,
     fontWeight: '600',
     textTransform: 'uppercase',
     letterSpacing: 0.5,
+  },
+  heroObservedTime: {
+    color: THEME.primaryLight,
+    fontSize: 11,
+    fontWeight: '600',
   },
   heroAqiRow: {
     flexDirection: 'row',
