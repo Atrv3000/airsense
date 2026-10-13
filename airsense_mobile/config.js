@@ -50,7 +50,7 @@ export const MUMBAI_MAP_CENTER = {
 export const CPCB_COLORS = {
   Good:         '#00B050',
   Satisfactory: '#92D050',
-  Moderate:     '#FFFF00',
+  Moderate:     '#F59E0B', // Rich amber-gold (readable with both light & dark text)
   Poor:         '#FF9900',
   'Very Poor':  '#FF0000',
   Severe:       '#C00000',

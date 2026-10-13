@@ -98,17 +98,26 @@
             width: 44px;
             height: 44px;
             border-radius: 50%;
-            color: #fff;
-            font-weight: 800;
-            font-size: 0.82rem;
-            box-shadow: 0 4px 14px rgba(0,0,0,0.4);
+            color: #ffffff;
+            font-weight: 900;
+            font-size: 0.86rem;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.5), inset 0 0 0 1px rgba(0,0,0,0.2);
             border: 3px solid #ffffff;
             cursor: pointer;
-            transition: transform 0.2s ease;
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+        }
+
+        /* Dark high-contrast text specifically for light/yellow/satisfactory backgrounds */
+        .aqi-marker-pin.dark-text {
+            color: #0f172a !important;
+            text-shadow: 0 0 1px rgba(255,255,255,0.6);
+            border: 3px solid #0f172a !important;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.4);
         }
 
         .aqi-marker-pin:hover {
-            transform: scale(1.15);
+            transform: scale(1.18);
+            box-shadow: 0 6px 20px rgba(0,0,0,0.6);
         }
 
         /* Legend */
@@ -315,10 +324,14 @@
                         validCount++;
                     }
 
+                    // Determine if background color is bright yellow/green needing dark text
+                    const isLightBg = p.category === 'Moderate' || p.category === 'Satisfactory' || (p.color_hex && p.color_hex.toUpperCase() === '#FFFF00');
+                    const textClass = isLightBg ? 'aqi-marker-pin dark-text' : 'aqi-marker-pin';
+
                     // Custom HTML Marker with AQI score inside
                     const customIcon = L.divIcon({
                         className: 'custom-div-icon',
-                        html: `<div class="aqi-marker-pin" style="background-color: ${p.color_hex};">${Math.round(p.current_aqi)}</div>`,
+                        html: `<div class="${textClass}" style="background-color: ${p.color_hex};">${Math.round(p.current_aqi)}</div>`,
                         iconSize: [44, 44],
                         iconAnchor: [22, 22]
                     });
@@ -367,20 +380,51 @@
                     document.getElementById('stat-city-aqi').innerText = Math.round(aqiSum / validCount);
                 }
 
-                // Render Hotspot Polygons
-                hotspots.forEach(hs => {
-                    if (hs.geometry.type === 'Polygon') {
-                        const p = hs.properties;
-                        // Leaflet expects [[lat, lon], [lat, lon], ...]
-                        const latLngs = hs.geometry.coordinates[0].map(c => [c[1], c[0]]);
+                // Render Hotspots as Smooth Circular Gradient Heat Zones
+                // We extract unique hotspot centroid locations and draw soft, overlapping concentric radial circles
+                const hotspotPoints = hotspots.filter(hs => hs.geometry.type === 'Point');
 
-                        L.polygon(latLngs, {
-                            color: p.stroke_color || '#ff0000',
-                            weight: 1,
-                            fillColor: p.color_hex || '#ff0000',
-                            fillOpacity: p.fill_opacity || 0.25
-                        }).bindTooltip(`Hotspot: AQI ${p.interpolated_aqi} (${p.category})`).addTo(hotspotsLayer);
-                    }
+                hotspotPoints.forEach(pt => {
+                    const coords = pt.geometry.coordinates; // [lon, lat]
+                    const lat = coords[1];
+                    const lon = coords[0];
+                    const p = pt.properties;
+                    const aqi = p.interpolated_aqi;
+                    const color = p.color_hex || '#ff4d4f';
+
+                    // Layer 1: Outer soft ambient glow (radius: ~2200m)
+                    L.circle([lat, lon], {
+                        radius: 2200,
+                        color: 'transparent',
+                        fillColor: color,
+                        fillOpacity: 0.08,
+                        interactive: false
+                    }).addTo(hotspotsLayer);
+
+                    // Layer 2: Mid dispersion ring (radius: ~1400m)
+                    L.circle([lat, lon], {
+                        radius: 1400,
+                        color: color,
+                        weight: 0.5,
+                        opacity: 0.25,
+                        fillColor: color,
+                        fillOpacity: 0.16,
+                        interactive: false
+                    }).addTo(hotspotsLayer);
+
+                    // Layer 3: Core intensive concentration bubble (radius: ~700m)
+                    L.circle([lat, lon], {
+                        radius: 700,
+                        color: color,
+                        weight: 1.5,
+                        opacity: 0.55,
+                        fillColor: color,
+                        fillOpacity: 0.28,
+                        interactive: true
+                    }).bindTooltip(`<b>Hotspot Zone</b><br>Interpolated AQI: ${aqi} (${p.category})`, {
+                        sticky: true,
+                        direction: 'top'
+                    }).addTo(hotspotsLayer);
                 });
 
                 // Add Layer Control
