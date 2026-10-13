@@ -1,67 +1,85 @@
 /**
- * Tab 4: Alerts & Health Recommendations Screen
- * Shows AQI category health matrix, active warnings, and safety guidelines.
+ * Tab 4: Health Advisories & Regulatory Protocols Screen
+ * Built as an operational public health guidance system:
+ * CPCB classification matrix, activity restrictions, and emergency protocols without emojis.
  */
 import React from 'react';
 import {
   View, Text, StyleSheet, ScrollView, RefreshControl
 } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { useFetch } from '../hooks/useFetch';
 import { LoadingCard, SectionHeader, getAQIColor } from '../components/SharedComponents';
 import { ENDPOINTS, THEME, CPCB_COLORS } from '../config';
 
-const AQI_HEALTH_MATRIX = [
+const CPCB_TIERS = [
   {
     category: 'Good',
     range: '0–50',
-    color: CPCB_COLORS['Good'],
-    icon: '😊',
-    groups: { general: 'Safe for all activities.', sensitive: 'No restrictions.', outdoor: 'Ideal for exercise.', mask: 'Not required.' }
+    color: CPCB_COLORS.Good,
+    summary: 'Minimal impact on health.',
+    general: 'Outdoor activities normal.',
+    sensitive: 'No preventative precautions required.',
   },
   {
     category: 'Satisfactory',
     range: '51–100',
-    color: CPCB_COLORS['Satisfactory'],
-    icon: '🙂',
-    groups: { general: 'Acceptable for most.', sensitive: 'May experience minor discomfort.', outdoor: 'Generally safe.', mask: 'Not required.' }
+    color: CPCB_COLORS.Satisfactory,
+    summary: 'Minor breathing discomfort to sensitive people.',
+    general: 'Acceptable atmospheric conditions for standard outdoor work.',
+    sensitive: 'Sensitive individuals should monitor prolonged exertion.',
   },
   {
     category: 'Moderate',
     range: '101–200',
-    color: CPCB_COLORS['Moderate'],
-    icon: '😐',
-    groups: { general: 'Minor impact on sensitive individuals.', sensitive: 'Reduce prolonged outdoor activities.', outdoor: 'Limit heavy outdoor exercise.', mask: 'Recommended for sensitive groups.' }
+    color: CPCB_COLORS.Moderate,
+    summary: 'Breathing discomfort to people with asthma, heart disease.',
+    general: 'Normal activity acceptable; consider reducing strenuous sports.',
+    sensitive: 'Wear simple masks and avoid peak evening outdoor rush.',
   },
   {
     category: 'Poor',
     range: '201–300',
-    color: CPCB_COLORS['Poor'],
-    icon: '😷',
-    groups: { general: 'Health discomfort likely.', sensitive: 'Avoid outdoor activities.', outdoor: 'Avoid strenuous outdoor exercise.', mask: 'N95 mask recommended.' }
+    color: CPCB_COLORS.Poor,
+    summary: 'Breathing discomfort on prolonged exposure.',
+    general: 'N95 filtration masks recommended during commute.',
+    sensitive: 'Avoid prolonged outdoor exertion; keep indoor windows closed.',
   },
   {
     category: 'Very Poor',
     range: '301–400',
     color: CPCB_COLORS['Very Poor'],
-    icon: '🚫',
-    groups: { general: 'Health alert — everyone affected.', sensitive: 'Stay indoors.', outdoor: 'Avoid all outdoor activities.', mask: 'N95 mask essential.' }
+    summary: 'Respiratory illness on prolonged exposure.',
+    general: 'Avoid heavy outdoor exertion; run indoor HEPA purifiers.',
+    sensitive: 'Remain indoors; keep emergency bronchodilators accessible.',
   },
   {
     category: 'Severe',
     range: '401–500',
-    color: CPCB_COLORS['Severe'],
-    icon: '🆘',
-    groups: { general: 'Emergency health conditions.', sensitive: 'Do not go outdoors.', outdoor: 'All outdoor activities banned.', mask: 'Double mask / respirator indoors.' }
+    color: CPCB_COLORS.Severe,
+    summary: 'Affects healthy people and severely impacts those with disease.',
+    general: 'Emergency protocol: restrict all non-essential outdoor transit.',
+    sensitive: 'Strict indoor stay; use sealed rooms with active air cleaners.',
   },
 ];
 
-const GENERAL_TIPS = [
-  { icon: '🌿', title: 'Use air purifiers indoors',    desc: 'HEPA-grade purifiers reduce indoor PM2.5 by up to 85%.' },
-  { icon: '🪟', title: 'Close windows during spikes', desc: 'Seal gaps during Very Poor/Severe episodes.' },
-  { icon: '🚶', title: 'Prefer mornings for exercise', desc: 'AQI is typically 15–25% lower before 8 AM.' },
-  { icon: '🌲', title: 'Choose greener routes',        desc: 'Tree-lined roads have 40% lower roadside PM2.5.' },
-  { icon: '🧴', title: 'Stay hydrated',                desc: 'Water helps flush inhaled particulates from airways.' },
-  { icon: '🏥', title: 'Consult a doctor',             desc: 'Asthmatics & cardiac patients should adjust medication during Poor+ days.' },
+const PRECAUTIONARY_PROTOCOLS = [
+  {
+    title: 'High-Efficiency Particulate Air (HEPA)',
+    description: 'Indoor air purifiers with true HEPA filters capture 99.97% of airborne PM2.5 particles down to 0.3 microns.',
+  },
+  {
+    title: 'N95 Respirator Usage',
+    description: 'Standard cloth masks provide less than 30% filtration against fine particulates. Certified N95/FFP2 masks are required during Poor or Severe intervals.',
+  },
+  {
+    title: 'Morning Ventilation Windows',
+    description: 'Pollution levels typically concentrate overnight and peak around morning rush hours (7 AM–10 AM). Schedule physical exercise or ventilation during early afternoons when convection lifts ground particulates.',
+  },
+  {
+    title: 'Urban Microclimate Selection',
+    description: 'Areas within 200 meters of arterial traffic corridors experience up to 3x higher ultrafine black carbon and nitrogen dioxide concentrations compared to residential interior roads.',
+  },
 ];
 
 export default function AlertsScreen() {
@@ -74,186 +92,246 @@ export default function AlertsScreen() {
     setRefreshing(false);
   };
 
-  const cityAQI  = data?.city_average_aqi;
-  const cityCat  = data?.city_category;
+  const cityAQI = data?.city_average_aqi;
+  const cityCat = data?.city_category;
   const cityColor = getAQIColor(cityCat);
-
-  // Determine current alert level
-  let alertLevel = null;
-  if (cityAQI >= 301) alertLevel = 'CRITICAL';
-  else if (cityAQI >= 201) alertLevel = 'WARNING';
-  else if (cityAQI >= 101) alertLevel = 'CAUTION';
 
   return (
     <View style={styles.container}>
       <ScrollView
         showsVerticalScrollIndicator={false}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={THEME.primary} />}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            tintColor={THEME.primaryLight}
+            colors={[THEME.primary]}
+          />
+        }
       >
-        {/* Live Alert Banner */}
-        {alertLevel && (
-          <View style={[styles.alertBanner, {
-            backgroundColor: cityColor + '18',
-            borderColor: cityColor,
-          }]}>
-            <Text style={styles.alertIcon}>
-              {alertLevel === 'CRITICAL' ? '🆘' : alertLevel === 'WARNING' ? '⚠️' : 'ℹ️'}
-            </Text>
+        {/* Header Title */}
+        <View style={styles.headerBar}>
+          <Text style={styles.headerSubtitle}>Public Health Guidelines</Text>
+          <Text style={styles.headerTitle}>Advisories & Protocols</Text>
+        </View>
+
+        {/* Current City Status Card */}
+        <View style={[styles.statusCard, { borderLeftColor: cityColor }]}>
+          <View style={styles.statusHeader}>
             <View style={{ flex: 1 }}>
-              <Text style={[styles.alertTitle, { color: cityColor }]}>
-                {alertLevel} — City AQI: {cityAQI ? Math.round(cityAQI) : '--'}
+              <Text style={styles.statusLabel}>Current Ambient Tier</Text>
+              <Text style={styles.statusCategory}>{cityCat || 'Assessing...'}</Text>
+            </View>
+            <View style={styles.statusScoreWrap}>
+              <Text style={[styles.statusScore, { color: cityColor }]}>
+                {cityAQI !== null ? Math.round(cityAQI) : '--'}
               </Text>
-              <Text style={styles.alertMsg}>
-                {cityCat} air quality detected across Mumbai.{' '}
-                {alertLevel === 'CRITICAL'
-                  ? 'Remain indoors. Wear masks.'
-                  : alertLevel === 'WARNING'
-                  ? 'Limit outdoor exposure. Use N95 masks.'
-                  : 'Sensitive groups should take precautions.'}
-              </Text>
+              <Text style={styles.statusScoreLabel}>AQI</Text>
             </View>
           </View>
-        )}
+          <Text style={styles.statusExplanation}>
+            Standard precautions applicable across Greater Mumbai based on Central Pollution Control Board (CPCB) NAQI guidelines.
+          </Text>
+        </View>
 
-        {/* CPCB Health Matrix */}
+        {/* CPCB Health Severity Matrix */}
         <SectionHeader
-          title="CPCB AQI Health Matrix"
-          subtitle="Official health guidelines by index category"
+          title="NAQI Classification Matrix"
+          subtitle="Official regulatory thresholds and public advisories"
         />
-        {AQI_HEALTH_MATRIX.map((item) => {
-          const isCurrent = cityCat && cityCat.toLowerCase().includes(item.category.toLowerCase());
-          return (
-            <View
-              key={item.category}
-              style={[
-                styles.matrixCard,
-                { borderColor: item.color + (isCurrent ? 'ff' : '44') },
-                isCurrent && { backgroundColor: item.color + '12' }
-              ]}
-            >
-              <View style={styles.matrixHeader}>
-                <Text style={styles.matrixIcon}>{item.icon}</Text>
-                <View>
-                  <Text style={[styles.matrixCategory, { color: item.color }]}>{item.category}</Text>
-                  <Text style={styles.matrixRange}>AQI {item.range}</Text>
-                </View>
-                {isCurrent && (
-                  <View style={[styles.currentPill, { backgroundColor: item.color }]}>
-                    <Text style={styles.currentPillText}>NOW</Text>
-                  </View>
-                )}
-              </View>
-              <View style={styles.matrixBody}>
-                {[
-                  { k: '👥 General',    v: item.groups.general },
-                  { k: '🤧 Sensitive',  v: item.groups.sensitive },
-                  { k: '🏃 Outdoors',   v: item.groups.outdoor },
-                  { k: '😷 Masks',      v: item.groups.mask },
-                ].map(row => (
-                  <View key={row.k} style={styles.matrixRow}>
-                    <Text style={styles.matrixKey}>{row.k}</Text>
-                    <Text style={styles.matrixVal}>{row.v}</Text>
-                  </View>
-                ))}
-              </View>
+        {CPCB_TIERS.map((tier) => (
+          <View key={tier.category} style={styles.tierCard}>
+            <View style={styles.tierHeader}>
+              <View style={[styles.tierColorBar, { backgroundColor: tier.color }]} />
+              <Text style={styles.tierTitle}>{tier.category}</Text>
+              <Text style={styles.tierRange}>AQI {tier.range}</Text>
             </View>
-          );
-        })}
-
-        {/* General Safety Tips */}
-        <SectionHeader
-          title="Safety Tips"
-          subtitle="Year-round air quality hygiene"
-        />
-        {GENERAL_TIPS.map((tip, i) => (
-          <View key={i} style={styles.tipCard}>
-            <Text style={styles.tipIcon}>{tip.icon}</Text>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.tipTitle}>{tip.title}</Text>
-              <Text style={styles.tipDesc}>{tip.desc}</Text>
+            <Text style={styles.tierSummary}>{tier.summary}</Text>
+            <View style={styles.tierGroupGrid}>
+              <View style={styles.tierGroup}>
+                <Text style={styles.tierGroupLabel}>General Public</Text>
+                <Text style={styles.tierGroupText}>{tier.general}</Text>
+              </View>
+              <View style={styles.tierGroup}>
+                <Text style={styles.tierGroupLabel}>Sensitive Individuals</Text>
+                <Text style={styles.tierGroupText}>{tier.sensitive}</Text>
+              </View>
             </View>
           </View>
         ))}
 
-        {/* Disclaimer */}
-        <View style={styles.disclaimer}>
-          <Text style={styles.disclaimerText}>
-            ⚠️ AQI values computed using official CPCB NAQI breakpoints. Health advisory follows MoEFCC / CPCB published guidelines.
-            This app is for educational and informational purposes. Consult a physician for medical advice.
-          </Text>
-        </View>
+        {/* Regulatory & Safety Protocols */}
+        <SectionHeader
+          title="Protective Interventions"
+          subtitle="Standard operational recommendations for urban populations"
+        />
+        {PRECAUTIONARY_PROTOCOLS.map((p, idx) => (
+          <View key={idx} style={styles.protocolCard}>
+            <View style={styles.protocolHeader}>
+              <Ionicons name="shield-checkmark-outline" size={16} color={THEME.primaryLight} />
+              <Text style={styles.protocolTitle}>{p.title}</Text>
+            </View>
+            <Text style={styles.protocolDesc}>{p.description}</Text>
+          </View>
+        ))}
 
-        <View style={{ height: 24 }} />
+        <View style={{ height: 32 }} />
       </ScrollView>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container:  { flex: 1, backgroundColor: THEME.bg },
-  alertBanner: {
-    margin: 16,
-    borderRadius: 14,
-    padding: 16,
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 12,
-    borderWidth: 1.5,
+  container: {
+    flex: 1,
+    backgroundColor: THEME.bg,
   },
-  alertIcon:  { fontSize: 28 },
-  alertTitle: { fontWeight: '800', fontSize: 15, marginBottom: 4 },
-  alertMsg:   { color: THEME.textSecondary, fontSize: 12, lineHeight: 18 },
-  matrixCard: {
+  headerBar: {
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    paddingBottom: 6,
+  },
+  headerSubtitle: {
+    color: THEME.textMuted,
+    fontSize: 12,
+    fontWeight: '500',
+    letterSpacing: 0.3,
+    textTransform: 'uppercase',
+  },
+  headerTitle: {
+    color: THEME.textPrimary,
+    fontSize: 22,
+    fontWeight: '800',
+    letterSpacing: -0.4,
+    marginTop: 2,
+  },
+  statusCard: {
     backgroundColor: THEME.surface,
     marginHorizontal: 16,
-    marginBottom: 10,
-    borderRadius: 14,
-    borderWidth: 1.5,
-    overflow: 'hidden',
+    marginTop: 10,
+    marginBottom: 8,
+    borderRadius: THEME.radiusMd,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: THEME.border,
+    borderLeftWidth: 4,
+    gap: 8,
   },
-  matrixHeader: {
+  statusHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
-    padding: 14,
-    paddingBottom: 8,
+    justifyContent: 'space-between',
   },
-  matrixIcon:     { fontSize: 24 },
-  matrixCategory: { fontWeight: '800', fontSize: 15 },
-  matrixRange:    { color: THEME.textMuted, fontSize: 11, marginTop: 2 },
-  currentPill: {
-    marginLeft: 'auto',
-    paddingHorizontal: 10,
-    paddingVertical: 3,
-    borderRadius: 9999,
+  statusLabel: {
+    color: THEME.textMuted,
+    fontSize: 11,
+    fontWeight: '600',
+    textTransform: 'uppercase',
   },
-  currentPillText: { color: '#fff', fontWeight: '800', fontSize: 10 },
-  matrixBody:   { paddingHorizontal: 14, paddingBottom: 12, gap: 6 },
-  matrixRow:    { flexDirection: 'row', gap: 8, alignItems: 'flex-start' },
-  matrixKey:    { color: THEME.textSecondary, fontSize: 11, fontWeight: '700', width: 90 },
-  matrixVal:    { color: THEME.textPrimary, fontSize: 11, flex: 1, lineHeight: 16 },
-  tipCard: {
+  statusCategory: {
+    color: THEME.textPrimary,
+    fontSize: 18,
+    fontWeight: '800',
+    marginTop: 2,
+  },
+  statusScoreWrap: {
+    alignItems: 'flex-end',
+  },
+  statusScore: {
+    fontSize: 28,
+    fontWeight: '800',
+  },
+  statusScoreLabel: {
+    color: THEME.textMuted,
+    fontSize: 10,
+    fontWeight: '600',
+  },
+  statusExplanation: {
+    color: THEME.textSecondary,
+    fontSize: 12,
+    lineHeight: 17,
+  },
+  tierCard: {
     backgroundColor: THEME.surface,
     marginHorizontal: 16,
     marginBottom: 8,
-    borderRadius: 12,
+    borderRadius: THEME.radiusMd,
     padding: 14,
+    borderWidth: 1,
+    borderColor: THEME.border,
+    gap: 6,
+  },
+  tierHeader: {
     flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 12,
-    borderWidth: 1,
-    borderColor: THEME.border,
+    alignItems: 'center',
+    gap: 8,
   },
-  tipIcon:  { fontSize: 22 },
-  tipTitle: { color: THEME.textPrimary, fontWeight: '700', fontSize: 13, marginBottom: 4 },
-  tipDesc:  { color: THEME.textSecondary, fontSize: 12, lineHeight: 17 },
-  disclaimer: {
-    margin: 16,
-    padding: 14,
+  tierColorBar: {
+    width: 3,
+    height: 16,
+    borderRadius: 2,
+  },
+  tierTitle: {
+    color: THEME.textPrimary,
+    fontSize: 14,
+    fontWeight: '700',
+    flex: 1,
+  },
+  tierRange: {
+    color: THEME.textMuted,
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  tierSummary: {
+    color: THEME.textSecondary,
+    fontSize: 12,
+    lineHeight: 16,
+  },
+  tierGroupGrid: {
+    marginTop: 6,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: THEME.border,
+    gap: 6,
+  },
+  tierGroup: {
+    gap: 2,
+  },
+  tierGroupLabel: {
+    color: THEME.textMuted,
+    fontSize: 10,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    letterSpacing: 0.3,
+  },
+  tierGroupText: {
+    color: THEME.textSecondary,
+    fontSize: 12,
+    lineHeight: 16,
+  },
+  protocolCard: {
     backgroundColor: THEME.surface,
-    borderRadius: 10,
+    marginHorizontal: 16,
+    marginBottom: 8,
+    borderRadius: THEME.radiusMd,
+    padding: 14,
     borderWidth: 1,
     borderColor: THEME.border,
+    gap: 6,
   },
-  disclaimerText: { color: THEME.textMuted, fontSize: 10, lineHeight: 15 },
+  protocolHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  protocolTitle: {
+    color: THEME.textPrimary,
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  protocolDesc: {
+    color: THEME.textSecondary,
+    fontSize: 12,
+    lineHeight: 17,
+  },
 });

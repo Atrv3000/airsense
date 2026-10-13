@@ -1,11 +1,7 @@
-// Central API configuration for the AirSense backend
+// Central API configuration and design system tokens for AirSense
 import Constants from 'expo-constants';
 import { Platform } from 'react-native';
 
-// Helper to determine the best backend host dynamically:
-// 1. If running inside Expo Go / dev client, Constants.expoConfig?.hostUri has your computer's LAN IP (e.g. 192.168.0.100:8081)
-// 2. If running on Web, use localhost (127.0.0.1)
-// 3. Fallback to computer's Wi-Fi LAN IP (192.168.0.100) so physical phones can connect over Wi-Fi
 function getApiBaseUrl() {
   const hostUri = Constants.expoConfig?.hostUri;
   if (hostUri) {
@@ -19,13 +15,10 @@ function getApiBaseUrl() {
     return 'http://127.0.0.1:8000';
   }
 
-  // Your computer's current Wi-Fi LAN IP
   return 'http://192.168.0.100:8000';
 }
 
 export const API_BASE_URL = getApiBaseUrl();
-
-console.log('[AirSense] Connecting to Backend at:', API_BASE_URL);
 
 export const ENDPOINTS = {
   health:        `${API_BASE_URL}/api/v1/health/`,
@@ -47,27 +40,32 @@ export const MUMBAI_MAP_CENTER = {
   longitudeDelta: 0.40,
 };
 
+// Official CPCB Breakpoint Color System (Refined for contrast & restraint)
 export const CPCB_COLORS = {
-  Good:         '#00B050',
-  Satisfactory: '#92D050',
-  Moderate:     '#F59E0B', // Rich amber-gold (readable with both light & dark text)
-  Poor:         '#FF9900',
-  'Very Poor':  '#FF0000',
-  Severe:       '#C00000',
+  Good:         '#15803d', // Forest Green
+  Satisfactory: '#65a30d', // Olive Green
+  Moderate:     '#d97706', // Rich Amber
+  Poor:         '#ea580c', // Dark Orange
+  'Very Poor':  '#dc2626', // Crimson Red
+  Severe:       '#991b1b', // Deep Burgundy
 };
 
+// Human-Designed SaaS Design Tokens (Restrained, functional, professional)
 export const THEME = {
-  bg:           '#0f172a',
-  surface:      '#1e293b',
-  surfaceAlt:   '#162032',
-  border:       '#334155',
-  primary:      '#38bdf8',
-  primaryDark:  '#0284c7',
-  textPrimary:  '#f8fafc',
-  textSecondary:'#94a3b8',
-  textMuted:    '#64748b',
-  accent:       '#818cf8',
-  error:        '#f87171',
-  success:      '#34d399',
-  warning:      '#fbbf24',
+  bg:            '#090d16', // Deep neutral obsidian
+  surface:       '#111827', // Crisp card surface
+  surfaceElevated: '#1a2234',
+  border:        '#1f293d', // Subtle divider
+  borderLight:   '#2d3748',
+  primary:       '#0284c7', // Slate cyan
+  primaryLight:  '#38bdf8',
+  textPrimary:   '#f8fafc', // High-contrast primary
+  textSecondary: '#94a3b8', // Muted reading secondary
+  textMuted:     '#64748b', // Captions and timestamps
+  success:       '#10b981',
+  warning:       '#f59e0b',
+  error:         '#ef4444',
+  radiusSm:      8,
+  radiusMd:      12,
+  radiusLg:      16,
 };
