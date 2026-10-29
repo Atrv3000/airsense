@@ -79,7 +79,9 @@ function MainTabs() {
 
 export default function App() {
   useEffect(() => {
-    registerForPushNotificationsAsync();
+    registerForPushNotificationsAsync().catch((err) => {
+      console.warn('[AirSense] Push registration skipped:', err?.message || err);
+    });
   }, []);
 
   return (
