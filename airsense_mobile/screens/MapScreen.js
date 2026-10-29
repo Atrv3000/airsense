@@ -444,7 +444,13 @@ export default function MapScreen() {
                         '<div class="popup-subid">' + stationId + (p.zone_type ? ' · ' + p.zone_type : '') + '</div>' +
                         '<div class="popup-feed" style="color:' + sourceColor + '">' + sourceText + '</div>' +
                         aqiSectionHtml +
-                        '<div class="popup-time">🕒 ' + formattedTime + '</div>' +
+                        '<div class="popup-time">' +
+                            '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:4px;">' +
+                                '<circle cx="12" cy="12" r="10"/>' +
+                                '<polyline points="12 6 12 12 16 14"/>' +
+                            '</svg>' +
+                            formattedTime +
+                        '</div>' +
                         '<div class="popup-grid">' +
                             '<div class="popup-cell">PM2.5<b>' + (p.pm25 != null ? p.pm25 + ' µg' : '--') + '</b></div>' +
                             '<div class="popup-cell">PM10<b>' + (p.pm10 != null ? p.pm10 + ' µg' : '--') + '</b></div>' +
