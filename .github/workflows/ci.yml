@@ -1,0 +1,71 @@
+name: AirSense CI
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  test:
+    name: Backend Test Suite (PostgreSQL 16)
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: airsense_db
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgrespassword
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DJANGO_SETTINGS_MODULE: airsense_backend.settings
+      SECRET_KEY: ci-testing-secret-key-32-chars-minimum-required!
+      DEBUG: "True"
+      DB_NAME: airsense_db
+      DB_USER: postgres
+      DB_PASSWORD: postgrespassword
+      DB_HOST: localhost
+      DB_PORT: 5432
+      INGESTION_SECRET_KEY: ci-test-ingestion-secret-key
+      ALLOWED_HOSTS: localhost,127.0.0.1
+      PYTHONUNBUFFERED: "1"
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install System Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libpq-dev libgomp1
+
+      - name: Install Python Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements.txt
+
+      - name: Run Database Migrations
+        run: |
+          cd backend
+          python manage.py migrate --noinput
+
+      - name: Run Pytest Test Suite
+        run: |
+          cd backend
+          pytest -v

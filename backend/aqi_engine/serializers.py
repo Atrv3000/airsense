@@ -34,6 +34,8 @@ class AQIRecordSerializer(serializers.ModelSerializer):
             'aqi_category',
             'color_hex',
             'valid_criteria_met',
+            'is_instantaneous_fallback',
+            'data_sufficiency_flags',
             # Sub-indices (Ip)
             'sub_index_pm25',
             'sub_index_pm10',

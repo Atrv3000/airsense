@@ -56,15 +56,17 @@ class MapLayerService:
             current_aqi = latest_aqi.overall_aqi
             raw = latest_aqi.raw_measurement
             source_tag = raw.source if raw else "OPEN_METEO_MODELLED"
-            is_measured = (source_tag in ["OPENAQ_MEASURED", "CPCB_OFFICIAL"])
+            is_measured = (source_tag in ["OPENAQ_MEASURED", "CPCB_OFFICIAL", "WAQI_FEED"])
 
-            known_stations_current.append({
-                'station_id': station.station_id,
-                'name': station.name,
-                'latitude': station.latitude,
-                'longitude': station.longitude,
-                'aqi': current_aqi
-            })
+            # CPCB Rule: only records meeting valid criteria (min 3 pollutants, one PM) drive spatial hotspots
+            if latest_aqi.valid_criteria_met:
+                known_stations_current.append({
+                    'station_id': station.station_id,
+                    'name': station.name,
+                    'latitude': station.latitude,
+                    'longitude': station.longitude,
+                    'aqi': current_aqi
+                })
 
             # Fetch forecasts from precomputed ForecastRecord or predictor fallback
             forecast_summary = []
@@ -123,13 +125,16 @@ class MapLayerService:
                     "source_label": (
                         "Official CPCB CAAQMS (Ground Measured)" if source_tag == "CPCB_OFFICIAL"
                         else ("OpenAQ Ground Sensor (Measured)" if source_tag == "OPENAQ_MEASURED"
-                              else "Open-Meteo Model (Modelled)")
+                              else ("WAQI Feed (Sub-indices)" if source_tag == "WAQI_FEED"
+                                    else "Open-Meteo Model (Modelled)"))
                     ),
                     # Air Quality Metrics
                     "current_aqi": current_aqi,
                     "prominent_pollutant": latest_aqi.prominent_pollutant,
                     "category": latest_aqi.aqi_category,
                     "color_hex": latest_aqi.color_hex,
+                    "valid_criteria_met": latest_aqi.valid_criteria_met,
+                    "is_instantaneous_fallback": latest_aqi.is_instantaneous_fallback,
                     # Raw Concentrations
                     "pm25": raw.pm25 if raw else None,
                     "pm10": raw.pm10 if raw else None,

@@ -133,3 +133,103 @@ class AQIEndpointsTestCase(TestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data.get('record_count'), 1)
         self.assertEqual(len(response.data.get('history')), 1)
+
+
+class CPCBDataSufficiencyTestCase(TestCase):
+    def setUp(self):
+        self.tz = ZoneInfo("Asia/Kolkata")
+        self.station = MonitoringStation.objects.create(
+            station_id="OPENAQ_TEST_SUFFICIENCY",
+            name="Sufficiency Test Station",
+            latitude=19.05,
+            longitude=72.85,
+            zone_type="URBAN"
+        )
+        self.base_time = datetime(2026, 10, 20, 12, 0, tzinfo=self.tz)
+
+    def test_24h_sufficiency_satisfied_with_16_hours(self):
+        # Create 16 hourly CleanMeasurements across the preceding 24 hours
+        for i in range(16):
+            CleanMeasurement.objects.create(
+                station=self.station,
+                recorded_at=self.base_time - timedelta(hours=i),
+                pm25=50.0 + i,
+                pm10=100.0,
+                no2=40.0,
+                so2=15.0,
+                co=1.0,
+                o3=30.0,
+                source="OPENAQ_MEASURED"
+            )
+
+        pollutants, is_fallback, sufficiency = AQIService.get_averaged_concentrations(
+            station=self.station,
+            target_time=self.base_time
+        )
+        self.assertFalse(is_fallback)
+        self.assertTrue(sufficiency['pm25']['is_sufficient'])
+        self.assertEqual(sufficiency['pm25']['valid_hours'], 16)
+        self.assertEqual(sufficiency['pm25']['method'], '24h_average')
+
+    def test_24h_sufficiency_falls_back_under_16_hours(self):
+        # Create only 10 hourly CleanMeasurements (< 16 required)
+        for i in range(10):
+            CleanMeasurement.objects.create(
+                station=self.station,
+                recorded_at=self.base_time - timedelta(hours=i),
+                pm25=60.0,
+                pm10=120.0,
+                source="OPENAQ_MEASURED"
+            )
+
+        pollutants, is_fallback, sufficiency = AQIService.get_averaged_concentrations(
+            station=self.station,
+            target_time=self.base_time
+        )
+        self.assertTrue(is_fallback)
+        self.assertFalse(sufficiency['pm25']['is_sufficient'])
+        self.assertEqual(sufficiency['pm25']['valid_hours'], 10)
+        self.assertEqual(sufficiency['pm25']['method'], 'instantaneous_fallback')
+
+    def test_8h_co_o3_sufficiency_satisfied_with_6_hours(self):
+        # Create 6 hourly records in the last 8 hours
+        for i in range(6):
+            CleanMeasurement.objects.create(
+                station=self.station,
+                recorded_at=self.base_time - timedelta(hours=i),
+                co=1.5,
+                o3=45.0,
+                source="OPENAQ_MEASURED"
+            )
+
+        pollutants, is_fallback, sufficiency = AQIService.get_averaged_concentrations(
+            station=self.station,
+            target_time=self.base_time
+        )
+        self.assertTrue(sufficiency['co']['is_sufficient'])
+        self.assertEqual(sufficiency['co']['valid_hours'], 6)
+        self.assertEqual(sufficiency['co']['method'], '8h_average')
+        self.assertTrue(sufficiency['o3']['is_sufficient'])
+        self.assertEqual(sufficiency['o3']['method'], '8h_average')
+
+    def test_8h_co_o3_sufficiency_falls_back_under_6_hours(self):
+        # Create only 4 hourly records in the last 8 hours
+        for i in range(4):
+            CleanMeasurement.objects.create(
+                station=self.station,
+                recorded_at=self.base_time - timedelta(hours=i),
+                co=2.0,
+                o3=50.0,
+                source="OPENAQ_MEASURED"
+            )
+
+        pollutants, is_fallback, sufficiency = AQIService.get_averaged_concentrations(
+            station=self.station,
+            target_time=self.base_time
+        )
+        self.assertFalse(sufficiency['co']['is_sufficient'])
+        self.assertEqual(sufficiency['co']['valid_hours'], 4)
+        self.assertEqual(sufficiency['co']['method'], 'instantaneous_fallback')
+        self.assertFalse(sufficiency['o3']['is_sufficient'])
+        self.assertEqual(sufficiency['o3']['method'], 'instantaneous_fallback')
+

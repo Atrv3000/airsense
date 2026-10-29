@@ -9,6 +9,7 @@ from ingestion.models import RawMeasurement, CleanMeasurement
 from ingestion.services.preprocessor import DataPreprocessor
 from ingestion.services.station_seeder import seed_mumbai_stations
 from aqi_engine.services.aqi_service import AQIService
+from ingestion.services.air_quality_client import AirQualityClient
 
 logger = logging.getLogger(__name__)
 
@@ -102,6 +103,20 @@ class Command(BaseCommand):
                 winds = w_hourly.get("wind_speed_10m", [])
                 wdirs = w_hourly.get("wind_direction_10m", [])
 
+                # 3. Fetch OpenAQ v3 historical ground sensor hours if available
+                start_dt_utc = timezone.now() - timedelta(days=days)
+                end_dt_utc = timezone.now()
+                openaq_history = AirQualityClient.fetch_openaq_historical_data(
+                    station_id_code=station.station_id,
+                    start_dt=start_dt_utc,
+                    end_dt=end_dt_utc
+                )
+                if openaq_history:
+                    self.stdout.write(f"  Retrieved OpenAQ ground measurements for {len(openaq_history)} hours.")
+
+                station_measured_count = 0
+                station_modelled_count = 0
+
                 raw_objs = []
                 for i in range(len(times)):
                     t_str = times[i]
@@ -114,18 +129,41 @@ class Command(BaseCommand):
                     co_raw = co[i] if i < len(co) else None
                     co_mg = round(co_raw / 1000.0, 3) if co_raw is not None else None
 
+                    # Check if OpenAQ measured ground reading exists for this hour
+                    hour_key = dt_aware.strftime("%Y-%m-%dT%H:00")
+                    openaq_hour = openaq_history.get(hour_key, {})
+
+                    if openaq_hour:
+                        station_measured_count += 1
+                        record_source = "OPENAQ_MEASURED"
+                        pm25_val = openaq_hour.get("pm25", pm25[i] if i < len(pm25) else None)
+                        pm10_val = openaq_hour.get("pm10", pm10[i] if i < len(pm10) else None)
+                        no2_val = openaq_hour.get("no2", no2[i] if i < len(no2) else None)
+                        so2_val = openaq_hour.get("so2", so2[i] if i < len(so2) else None)
+                        co_val = openaq_hour.get("co", co_mg)
+                        o3_val = openaq_hour.get("o3", o3[i] if i < len(o3) else None)
+                    else:
+                        station_modelled_count += 1
+                        record_source = "OPEN_METEO_MODELLED"
+                        pm25_val = pm25[i] if i < len(pm25) else None
+                        pm10_val = pm10[i] if i < len(pm10) else None
+                        no2_val = no2[i] if i < len(no2) else None
+                        so2_val = so2[i] if i < len(so2) else None
+                        co_val = co_mg
+                        o3_val = o3[i] if i < len(o3) else None
+
                     defaults = {
-                        "pm25": pm25[i] if i < len(pm25) else None,
-                        "pm10": pm10[i] if i < len(pm10) else None,
-                        "no2": no2[i] if i < len(no2) else None,
-                        "so2": so2[i] if i < len(so2) else None,
-                        "co": co_mg,
-                        "o3": o3[i] if i < len(o3) else None,
+                        "pm25": pm25_val,
+                        "pm10": pm10_val,
+                        "no2": no2_val,
+                        "so2": so2_val,
+                        "co": co_val,
+                        "o3": o3_val,
                         "temperature": temps[i] if i < len(temps) else None,
                         "humidity": humids[i] if i < len(humids) else None,
                         "wind_speed": winds[i] if i < len(winds) else None,
                         "wind_direction": wdirs[i] if i < len(wdirs) else None,
-                        "source": "OPEN_METEO_MODELLED",
+                        "source": record_source,
                         "is_validated": True
                     }
 
@@ -190,7 +228,10 @@ class Command(BaseCommand):
                     total_clean_saved += 1
                     AQIService.calculate_for_measurement(c_dict["raw_obj"])
 
-                self.stdout.write(self.style.SUCCESS(f"  Processed {len(raw_objs)} records for {station.name}."))
+                self.stdout.write(self.style.SUCCESS(
+                    f"  Processed {len(raw_objs)} records for {station.name} "
+                    f"(Measured: {station_measured_count}, Modelled: {station_modelled_count})."
+                ))
 
             except Exception as e:
                 self.stdout.write(self.style.ERROR(f"Error backfilling {station.name}: {e}"))

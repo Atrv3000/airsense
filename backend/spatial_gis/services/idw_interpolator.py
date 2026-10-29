@@ -1,20 +1,28 @@
 """
-Spatial Interpolation Engine for Mumbai using Inverse Distance Weighting (IDW).
+Spatial Interpolation Engine for Mumbai using Inverse Distance Weighting (IDW),
+Ordinary Kriging (Gaussian Process with spatial covariance), and Spatial Gradient Boosting.
 Applies landmass boundary clipping so interpolated pollution values do not spill
 into the Arabian Sea or distant offshore water bodies.
 """
 
 import math
 import numpy as np
-from typing import List, Dict, Any, Tuple
+from typing import List, Dict, Any, Tuple, Optional
+from sklearn.gaussian_process import GaussianProcessRegressor
+from sklearn.gaussian_process.kernels import Matern, ConstantKernel as C, WhiteKernel
+from sklearn.ensemble import GradientBoostingRegressor
 
 class IDWInterpolator:
     """
-    Computes 2D spatial interpolation across Greater Mumbai using Inverse Distance Weighting.
-    Formula:
-        Z_hat(x, y) = sum(w_i * Z_i) / sum(w_i)
-        where w_i = 1 / (distance(p, p_i) + epsilon)^power
+    Computes 2D spatial interpolation across Greater Mumbai using:
+    1. Inverse Distance Weighting (IDW with selectable power p in {1, 2, 3})
+    2. Ordinary Kriging (Gaussian Process Regression with Matern-3/2 covariance)
+    3. Spatial Gradient Boosted Regressor (GBM on coordinates)
     """
+
+    # Empirical winner of Leave-One-Station-Out Cross-Validation (LOSOCV) benchmark
+    DEFAULT_METHOD = "kriging"  # Ordinary Kriging via Matern-3/2 covariance
+    DEFAULT_POWER = 2.0
 
     # Greater Mumbai Bounding Box
     MUMBAI_BOUNDS = {
@@ -108,14 +116,123 @@ class IDWInterpolator:
         return lat_grid.flatten(), lon_grid.flatten(), lat_step, lon_step
 
     @classmethod
+    def predict_points_idw(
+        cls,
+        target_lats: np.ndarray,
+        target_lons: np.ndarray,
+        known_stations: List[Dict[str, Any]],
+        power: float = 2.0
+    ) -> np.ndarray:
+        """
+        Predicts AQI at arbitrary (target_lats, target_lons) coordinates using Inverse Distance Weighting.
+        """
+        if not known_stations:
+            return np.zeros_like(target_lats)
+
+        st_lats = np.array([s['latitude'] for s in known_stations], dtype=float)
+        st_lons = np.array([s['longitude'] for s in known_stations], dtype=float)
+        st_aqis = np.array([s['aqi'] for s in known_stations], dtype=float)
+
+        dist_matrix = cls.haversine_distance_matrix(target_lats, target_lons, st_lats, st_lons)
+
+        # Exact location match check (< 10 meters)
+        exact_matches = dist_matrix < 0.01
+        has_exact = exact_matches.any(axis=1)
+
+        # Regular IDW with small numerical stabilization epsilon
+        epsilon = 0.001
+        weights = 1.0 / np.power(dist_matrix + epsilon, power)
+        weights_sum = weights.sum(axis=1)
+        preds = np.dot(weights, st_aqis) / weights_sum
+
+        # Overwrite exact matches with direct station AQI
+        if has_exact.any():
+            for row_idx in np.where(has_exact)[0]:
+                col_idx = np.where(exact_matches[row_idx])[0][0]
+                preds[row_idx] = st_aqis[col_idx]
+
+        return np.clip(preds, 0.0, 500.0)
+
+    @classmethod
+    def predict_points_kriging(
+        cls,
+        target_lats: np.ndarray,
+        target_lons: np.ndarray,
+        known_stations: List[Dict[str, Any]]
+    ) -> np.ndarray:
+        """
+        Predicts AQI using Ordinary Kriging (Gaussian Process Regression with Matern-3/2 spatial covariance).
+        """
+        if not known_stations:
+            return np.zeros_like(target_lats)
+
+        X_train = np.array([[s['latitude'], s['longitude']] for s in known_stations], dtype=float)
+        y_train = np.array([s['aqi'] for s in known_stations], dtype=float)
+
+        if len(known_stations) < 3:
+            # Fall back to IDW if too few stations for kriging covariance fitting
+            return cls.predict_points_idw(target_lats, target_lons, known_stations, power=2.0)
+
+        # Matern-3/2 kernel models realistic non-differentiable atmospheric dispersion fields
+        kernel = C(1.0, (1e-2, 1e3)) * Matern(length_scale=0.1, length_scale_bounds=(1e-2, 2.0), nu=1.5) + WhiteKernel(noise_level=0.5, noise_level_bounds=(1e-3, 5.0))
+        gpr = GaussianProcessRegressor(kernel=kernel, alpha=1e-2, normalize_y=True, n_restarts_optimizer=2, random_state=42)
+
+        try:
+            gpr.fit(X_train, y_train)
+            X_target = np.column_stack([target_lats, target_lons])
+            preds = gpr.predict(X_target)
+        except Exception:
+            preds = cls.predict_points_idw(target_lats, target_lons, known_stations, power=2.0)
+
+        return np.clip(preds, 0.0, 500.0)
+
+    @classmethod
+    def predict_points_gbm(
+        cls,
+        target_lats: np.ndarray,
+        target_lons: np.ndarray,
+        known_stations: List[Dict[str, Any]]
+    ) -> np.ndarray:
+        """
+        Predicts AQI using Spatial Gradient Boosting Regressor on spatial coordinates.
+        """
+        if not known_stations:
+            return np.zeros_like(target_lats)
+
+        X_train = np.array([[s['latitude'], s['longitude']] for s in known_stations], dtype=float)
+        y_train = np.array([s['aqi'] for s in known_stations], dtype=float)
+
+        if len(known_stations) < 4:
+            return cls.predict_points_idw(target_lats, target_lons, known_stations, power=2.0)
+
+        gbm = GradientBoostingRegressor(
+            n_estimators=35,
+            max_depth=2,
+            learning_rate=0.08,
+            min_samples_split=2,
+            min_samples_leaf=1,
+            random_state=42
+        )
+        try:
+            gbm.fit(X_train, y_train)
+            X_target = np.column_stack([target_lats, target_lons])
+            preds = gbm.predict(X_target)
+        except Exception:
+            preds = cls.predict_points_idw(target_lats, target_lons, known_stations, power=2.0)
+
+        return np.clip(preds, 0.0, 500.0)
+
+    @classmethod
     def interpolate_grid(
         cls,
         known_stations: List[Dict[str, Any]],
         resolution: int = 25,
+        method: Optional[str] = None,
         power: float = 2.0
     ) -> List[Dict[str, Any]]:
         """
         Interpolates AQI across Mumbai landmass using known station coordinates and readings.
+        Supports method in ['kriging', 'idw', 'gbm']. Defaults to production champion 'kriging'.
         Filters out offshore/sea cells so pollution gradients do not spill into the Arabian Sea.
         """
         if not known_stations:
@@ -123,23 +240,23 @@ class IDWInterpolator:
 
         station_lats = np.array([s['latitude'] for s in known_stations], dtype=float)
         station_lons = np.array([s['longitude'] for s in known_stations], dtype=float)
-        station_aqis = np.array([s['aqi'] for s in known_stations], dtype=float)
 
         grid_lats, grid_lons, lat_step, lon_step = cls.generate_mumbai_grid(resolution)
 
-        # Pairwise distance matrix between all grid points (M) and all stations (N)
-        dist_matrix = cls.haversine_distance_matrix(grid_lats, grid_lons, station_lats, station_lons)
+        # Generate predictions using selected spatial method
+        target_method = method or cls.DEFAULT_METHOD
+        method_clean = target_method.lower().strip()
+        if method_clean in ["kriging", "ordinary_kriging", "gpr"]:
+            interpolated_aqi = cls.predict_points_kriging(grid_lats, grid_lons, known_stations)
+        elif method_clean in ["gbm", "spatial_gbm", "gradient_boosting"]:
+            interpolated_aqi = cls.predict_points_gbm(grid_lats, grid_lons, known_stations)
+        else:
+            interpolated_aqi = cls.predict_points_idw(grid_lats, grid_lons, known_stations, power=power)
 
-        # Small epsilon avoids division by zero
-        epsilon = 0.01
-        weights = 1.0 / (np.power(dist_matrix + epsilon, power))
-
-        # Vectorized IDW
-        weights_sum = weights.sum(axis=1)
-        interpolated_aqi = np.dot(weights, station_aqis) / weights_sum
         interpolated_aqi = np.round(interpolated_aqi, 1)
 
-        # Also calculate minimum distance to closest station to avoid unbounded offshore extrapolation
+        # Minimum distance to closest station to avoid unbounded offshore extrapolation
+        dist_matrix = cls.haversine_distance_matrix(grid_lats, grid_lons, station_lats, station_lons)
         min_dists = dist_matrix.min(axis=1)
 
         results = []

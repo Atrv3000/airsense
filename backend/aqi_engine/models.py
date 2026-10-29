@@ -35,6 +35,17 @@ class AQIRecord(models.Model):
     color_hex = models.CharField(max_length=16, default="#00B050")
     valid_criteria_met = models.BooleanField(default=True, help_text="True if >=3 pollutants and PM included")
 
+    # CPCB Data Sufficiency & Fallback Tracking
+    is_instantaneous_fallback = models.BooleanField(
+        default=False,
+        help_text="True if any pollutant fell back to instantaneous concentration due to insufficient multi-hour history (<16h for 24h, <6h for 8h)"
+    )
+    data_sufficiency_flags = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text="Pollutant-specific CPCB data sufficiency metadata, valid hour counts, and averaging method used"
+    )
+
     calculated_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

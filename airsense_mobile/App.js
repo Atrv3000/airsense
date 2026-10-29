@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
@@ -11,6 +11,7 @@ import ForecastScreen from './screens/ForecastScreen';
 import AlertsScreen from './screens/AlertsScreen';
 import StationDetailScreen from './screens/StationDetailScreen';
 import { THEME } from './config';
+import { registerForPushNotificationsAsync } from './services/notificationService';
 
 const Tab = createBottomTabNavigator();
 const Stack = createNativeStackNavigator();
@@ -77,6 +78,10 @@ function MainTabs() {
 }
 
 export default function App() {
+  useEffect(() => {
+    registerForPushNotificationsAsync();
+  }, []);
+
   return (
     <NavigationContainer>
       <MainTabs />

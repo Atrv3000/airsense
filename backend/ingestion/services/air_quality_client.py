@@ -123,23 +123,8 @@ class AirQualityClient:
                     except Exception:
                         pass
 
-                # Convert units based on official parameter metadata
-                val_converted = float(val)
-                if p_name == "co":
-                    # CPCB requires CO in mg/m3
-                    if p_units in ["µg/m³", "ug/m3"]:
-                        val_converted = round(val_converted / 1000.0, 3)
-                    elif p_units == "ppb":
-                        # 1 ppb CO ≈ 1.145 ug/m3 = 0.001145 mg/m3
-                        val_converted = round((val_converted * 1.145) / 1000.0, 3)
-                    # if already mg/m3, keep as is
-                elif p_name in ["no2", "so2"]:
-                    if p_units == "ppb":
-                        # standard conversion for NO2: 1 ppb ≈ 1.88 ug/m3; SO2: 1 ppb ≈ 2.62 ug/m3
-                        factor = 1.88 if p_name == "no2" else 2.62
-                        val_converted = round(val_converted * factor, 2)
-
-                if p_name in ["pm25", "pm10", "no2", "so2", "co", "o3"]:
+                val_converted = cls.convert_openaq_value(p_name, p_units, val)
+                if val_converted is not None and p_name in ["pm25", "pm10", "no2", "so2", "co", "o3"]:
                     if p_name not in readings:
                         readings[p_name] = val_converted
 
@@ -150,6 +135,155 @@ class AirQualityClient:
             logger.warning(f"OpenAQ ground query error for {station_id_code}: {e}")
 
         return None, None
+
+    @staticmethod
+    def convert_openaq_value(p_name: str, p_units: str, val: float) -> float | None:
+        """
+        Converts OpenAQ sensor reading to CPCB standard units:
+        - CO in mg/m3 (converts from ug/m3 or ppb)
+        - NO2, SO2, PM2.5, PM10, O3 in ug/m3 (converts from ppb if needed)
+        """
+        if val is None or val < 0:
+            return None
+        val_converted = float(val)
+        p_units_clean = (p_units or "").lower()
+        if p_name == "co":
+            if p_units_clean in ["µg/m³", "ug/m3"]:
+                val_converted = round(val_converted / 1000.0, 3)
+            elif p_units_clean == "ppb":
+                # 1 ppb CO ≈ 1.145 ug/m3 = 0.001145 mg/m3
+                val_converted = round((val_converted * 1.145) / 1000.0, 3)
+            else:
+                val_converted = round(val_converted, 3)
+        elif p_name in ["no2", "so2"]:
+            if p_units_clean == "ppb":
+                factor = 1.88 if p_name == "no2" else 2.62
+                val_converted = round(val_converted * factor, 2)
+            else:
+                val_converted = round(val_converted, 2)
+        else:
+            val_converted = round(val_converted, 2)
+        return val_converted
+
+    @classmethod
+    def fetch_openaq_historical_data(
+        cls,
+        station_id_code: str,
+        start_dt: datetime,
+        end_dt: datetime
+    ) -> dict[str, dict[str, float]]:
+        """
+        Queries OpenAQ v3 historical sensor hours endpoint (/v3/sensors/{id}/hours)
+        for ground-level criteria pollutants at a specific station.
+        Returns:
+            dict mapping local hour ISO string ("YYYY-MM-DDTHH:00") to pollutant dict
+            e.g. {"2026-10-05T12:00": {"pm25": 28.4, "pm10": 65.2, ...}}
+        """
+        if not cls.OPENAQ_API_KEY:
+            return {}
+
+        location_id = cls._extract_location_id(station_id_code)
+        if not location_id:
+            return {}
+
+        headers = {"X-API-Key": cls.OPENAQ_API_KEY}
+        try:
+            # 1. Fetch sensor catalog for location
+            loc_res = requests.get(
+                f"{cls.OPENAQ_API_BASE}/locations/{location_id}/sensors",
+                headers=headers,
+                timeout=10
+            )
+            if loc_res.status_code != 200:
+                return {}
+
+            sensors_list = loc_res.json().get("results", [])
+            if not sensors_list:
+                return {}
+
+            # Map criteria pollutants to the most relevant/recent sensor
+            target_params = {"pm25", "pm10", "no2", "so2", "co", "o3"}
+            param_sensors: dict[str, dict] = {}
+
+            for s in sensors_list:
+                p_name = (s.get("parameter", {}).get("name") or "").lower()
+                if p_name in ["pm2.5", "pm25"]:
+                    p_name = "pm25"
+                elif p_name in ["ozone"]:
+                    p_name = "o3"
+
+                if p_name in target_params:
+                    # Prefer sensors with more recent datetimeLast
+                    s_last = (s.get("datetimeLast") or {}).get("utc", "")
+                    if p_name not in param_sensors:
+                        param_sensors[p_name] = s
+                    else:
+                        existing_last = (param_sensors[p_name].get("datetimeLast") or {}).get("utc", "")
+                        if s_last > existing_last:
+                            param_sensors[p_name] = s
+
+            # 2. Fetch hourly readings for each matched sensor
+            dt_from_str = start_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+            dt_to_str = end_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+            history_by_hour: dict[str, dict[str, float]] = {}
+
+            for p_name, s_meta in param_sensors.items():
+                sensor_id = s_meta.get("id")
+                units = (s_meta.get("parameter", {}).get("units") or "").lower()
+                if not sensor_id:
+                    continue
+
+                page = 1
+                max_pages = 5  # limit=1000 * 5 = 5000 hours (~208 days coverage)
+                while page <= max_pages:
+                    params = {
+                        "datetime_from": dt_from_str,
+                        "datetime_to": dt_to_str,
+                        "limit": 1000,
+                        "page": page
+                    }
+                    try:
+                        h_res = requests.get(
+                            f"{cls.OPENAQ_API_BASE}/sensors/{sensor_id}/hours",
+                            headers=headers,
+                            params=params,
+                            timeout=12
+                        )
+                        if h_res.status_code != 200:
+                            break
+                        items = h_res.json().get("results", [])
+                        if not items:
+                            break
+
+                        for item in items:
+                            val = item.get("value")
+                            converted = cls.convert_openaq_value(p_name, units, val)
+                            if converted is None:
+                                continue
+
+                            dt_info = item.get("period", {}).get("datetimeTo", {})
+                            local_iso = dt_info.get("local") or dt_info.get("utc")
+                            if not local_iso:
+                                continue
+
+                            # Normalize to YYYY-MM-DDTHH:00
+                            hour_key = local_iso[:13] + ":00"
+                            if hour_key not in history_by_hour:
+                                history_by_hour[hour_key] = {}
+                            history_by_hour[hour_key][p_name] = converted
+
+                        if len(items) < 1000:
+                            break
+                        page += 1
+                    except requests.RequestException:
+                        break
+
+            return history_by_hour
+
+        except Exception as e:
+            logger.warning(f"Error fetching historical OpenAQ sensor hours for {station_id_code}: {e}")
+            return {}
 
     @classmethod
     def fetch_station_air_quality(
@@ -231,7 +365,7 @@ class AirQualityClient:
             except Exception as e:
                 logger.warning(f"Could not map ground reading time {ground_time_str}: {e}")
 
-        # 3. Fetch official real-time CAAQMS data from CPCB network and attach to matching hour
+        # 3. Fetch optional real-time WAQI telemetry if configured
         try:
             from .cpcb_client import CPCBClient
             cpcb_data, cpcb_time_str = CPCBClient.fetch_station_cpcb_reading(station_id_code=station_id_code)
@@ -242,12 +376,14 @@ class AirQualityClient:
                 if matching_hour_key not in results:
                     results[matching_hour_key] = {}
 
-                for param in ["pm25", "pm10", "no2", "so2", "co", "o3", "temperature", "humidity", "wind_speed"]:
-                    if cpcb_data.get(param) is not None:
+                # Supplement meteorological parameters if missing, never overwrite physical concentrations
+                for param in ["temperature", "humidity", "wind_speed"]:
+                    if cpcb_data.get(param) is not None and results[matching_hour_key].get(param) is None:
                         results[matching_hour_key][param] = cpcb_data[param]
 
-                results[matching_hour_key]["source"] = "CPCB_OFFICIAL"
+                if "sub_indices" in cpcb_data:
+                    results[matching_hour_key]["waqi_sub_indices"] = cpcb_data["sub_indices"]
         except Exception as e:
-            logger.warning(f"Could not attach CPCB live observation: {e}")
+            logger.warning(f"Could not attach WAQI live observation: {e}")
 
         return results

@@ -69,7 +69,7 @@ class AlertEngine:
     }
 
     @classmethod
-    def evaluate_and_generate_alerts(cls, threshold_override: float = None) -> List[AlertNotification]:
+    def evaluate_and_generate_alerts(cls, threshold_override: float = None, send_push: bool = True) -> List[AlertNotification]:
         """
         1. Evaluates latest AQIRecord for each station and creates alert when AQI >= 201 or in Poor/Very Poor/Severe.
         2. Auto-resolves active alerts if the station's current AQI drops below the alert threshold.
@@ -85,51 +85,57 @@ class AlertEngine:
             latest_record = AQIRecord.objects.filter(station=station).order_by('-recorded_at').first()
 
             if latest_record and latest_record.overall_aqi is not None:
-                aqi = latest_record.overall_aqi
-                cat = latest_record.aqi_category
-
-                # AUTO-RESOLVE check: If AQI dropped below threshold, resolve existing active alerts for this station
-                if aqi < threshold and cat not in ['Poor', 'Very Poor', 'Severe']:
-                    active_alerts = AlertNotification.objects.filter(station=station, is_active=True, is_forecast_alert=False)
-                    for alert in active_alerts:
-                        alert.is_active = False
-                        alert.resolved_at = now
-                        alert.save()
-                        logger.info(f"Auto-resolved alert for {station.name} as AQI dropped to {aqi}.")
-                elif aqi >= threshold or cat in ['Poor', 'Very Poor', 'Severe']:
-                    advisory = cls.ADVISORY_MATRIX.get(cat, cls.ADVISORY_MATRIX['Poor'])
-                    severity = advisory['severity']
-
-                    title = f"{severity} AQI Alert: {station.name} ({cat})"
-                    message = (
-                        f"AQI at {station.name} has reached {round(aqi, 1)} ({cat}). "
-                        f"Prominent pollutant: {latest_record.prominent_pollutant or 'Particulates'}."
+                # CPCB Rule Check: only records meeting valid criteria (min 3 pollutants, one PM) drive alerts
+                if not latest_record.valid_criteria_met:
+                    logger.info(
+                        f"Skipping alert evaluation for {station.name}: valid_criteria_met is False (CPCB criteria not met)."
                     )
+                else:
+                    aqi = latest_record.overall_aqi
+                    cat = latest_record.aqi_category
 
-                    recent_cutoff = now - timezone.timedelta(hours=6)
-                    existing = AlertNotification.objects.filter(
-                        station=station,
-                        is_active=True,
-                        is_forecast_alert=False,
-                        category=cat,
-                        created_at__gte=recent_cutoff
-                    ).exists()
+                    # AUTO-RESOLVE check: If AQI dropped below threshold, resolve existing active alerts for this station
+                    if aqi < threshold and cat not in ['Poor', 'Very Poor', 'Severe']:
+                        active_alerts = AlertNotification.objects.filter(station=station, is_active=True, is_forecast_alert=False)
+                        for alert in active_alerts:
+                            alert.is_active = False
+                            alert.resolved_at = now
+                            alert.save()
+                            logger.info(f"Auto-resolved alert for {station.name} as AQI dropped to {aqi}.")
+                    elif aqi >= threshold or cat in ['Poor', 'Very Poor', 'Severe']:
+                        advisory = cls.ADVISORY_MATRIX.get(cat, cls.ADVISORY_MATRIX['Poor'])
+                        severity = advisory['severity']
 
-                    if not existing:
-                        alert = AlertNotification.objects.create(
-                            station=station,
-                            title=title,
-                            message=message,
-                            severity=severity,
-                            aqi_value=round(aqi, 1),
-                            category=cat,
-                            prominent_pollutant=latest_record.prominent_pollutant,
-                            health_recommendations=advisory['tips'],
-                            is_forecast_alert=False,
-                            is_active=True
+                        title = f"{severity} AQI Alert: {station.name} ({cat})"
+                        message = (
+                            f"AQI at {station.name} has reached {round(aqi, 1)} ({cat}). "
+                            f"Prominent pollutant: {latest_record.prominent_pollutant or 'Particulates'}."
                         )
-                        created_alerts.append(alert)
-                        logger.info(f"Created Observed Alert: {alert}")
+
+                        recent_cutoff = now - timezone.timedelta(hours=6)
+                        existing = AlertNotification.objects.filter(
+                            station=station,
+                            is_active=True,
+                            is_forecast_alert=False,
+                            category=cat,
+                            created_at__gte=recent_cutoff
+                        ).exists()
+
+                        if not existing:
+                            alert = AlertNotification.objects.create(
+                                station=station,
+                                title=title,
+                                message=message,
+                                severity=severity,
+                                aqi_value=round(aqi, 1),
+                                category=cat,
+                                prominent_pollutant=latest_record.prominent_pollutant,
+                                health_recommendations=advisory['tips'],
+                                is_forecast_alert=False,
+                                is_active=True
+                            )
+                            created_alerts.append(alert)
+                            logger.info(f"Created Observed Alert: {alert}")
 
             # 4. Proactive Forecast-based alerts (+3h, +6h, +24h)
             forecast_breaches = ForecastRecord.objects.filter(
@@ -173,6 +179,14 @@ class AlertEngine:
                     )
                     created_alerts.append(f_alert)
                     logger.info(f"Created Forecast Alert: {f_alert}")
+
+        # Dispatch push notifications to registered device tokens
+        if created_alerts and send_push:
+            try:
+                from alerts.services_push import ExpoPushClient
+                ExpoPushClient.send_alert_push_notifications(created_alerts)
+            except Exception as e:
+                logger.error(f"Error dispatching push notifications: {e}")
 
         return created_alerts
 

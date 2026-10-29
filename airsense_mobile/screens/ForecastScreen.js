@@ -69,14 +69,22 @@ export default function ForecastScreen() {
   const histUrl = `${ENDPOINTS.historicalAqi}?station_id=${currentStationId}&limit=24`;
   const predUrl = `${ENDPOINTS.predict}?station_id=${currentStationId}&hours=24`;
   const metricsUrl = ENDPOINTS.modelMetrics;
+  const verifUrl = `${ENDPOINTS.forecastVerification}?days=7`;
 
   const hist  = useFetch(currentStationId ? histUrl : null);
   const pred  = useFetch(currentStationId ? predUrl : null);
   const model = useFetch(metricsUrl);
+  const verif = useFetch(verifUrl);
 
   const onRefresh = async () => {
     setRefreshing(true);
-    await Promise.all([stationsFetch.refetch(), hist.refetch(), pred.refetch(), model.refetch()]);
+    await Promise.all([
+      stationsFetch.refetch(),
+      hist.refetch(),
+      pred.refetch(),
+      model.refetch(),
+      verif.refetch(),
+    ]);
     setRefreshing(false);
   };
 
@@ -305,6 +313,57 @@ export default function ForecastScreen() {
               <Text style={styles.metricsNote}>
                 Errors reported in AQI index units. Evaluated using expanding-window TimeSeriesSplit cross-validation against persistence baseline.
               </Text>
+            </View>
+          </>
+        )}
+
+        {/* Rolling Forecast Verification (Continuous Model Monitoring) */}
+        {verif.data && (
+          <>
+            <SectionHeader
+              title="Forecast Verification (Monitoring)"
+              subtitle="Realized ground-truth error across horizons (Past 7 Days)"
+            />
+            <View style={styles.card}>
+              <View style={styles.champRow}>
+                <Ionicons name="analytics-outline" size={18} color={THEME.primaryLight} />
+                <Text style={styles.champLabel}>Verified Observations:</Text>
+                <Text style={styles.champVal}>{verif.data.total_verified || 0} evaluated</Text>
+              </View>
+
+              {verif.data.total_verified > 0 && Object.keys(verif.data.horizons || {}).length > 0 ? (
+                <>
+                  <View style={styles.metricsTable}>
+                    <View style={styles.tableHeader}>
+                      <Text style={[styles.tcell, styles.theader, { flex: 1.5 }]}>Horizon</Text>
+                      <Text style={[styles.tcell, styles.theader]}>Samples</Text>
+                      <Text style={[styles.tcell, styles.theader]}>MAE</Text>
+                      <Text style={[styles.tcell, styles.theader]}>RMSE</Text>
+                      <Text style={[styles.tcell, styles.theader]}>Bias</Text>
+                    </View>
+                    {Object.entries(verif.data.horizons).map(([hKey, hData], i) => (
+                      <View key={hKey} style={[styles.tableRow, i % 2 === 1 && styles.tableRowAlt]}>
+                        <Text style={[styles.tcell, { flex: 1.5, color: THEME.primaryLight, fontWeight: '600' }]}>
+                          +{hData.horizon}h
+                        </Text>
+                        <Text style={styles.tcell}>{hData.samples}</Text>
+                        <Text style={styles.tcell}>{hData.mae}</Text>
+                        <Text style={styles.tcell}>{hData.rmse}</Text>
+                        <Text style={[styles.tcell, { color: hData.bias > 0 ? THEME.warning : THEME.textSecondary }]}>
+                          {hData.bias > 0 ? `+${hData.bias}` : hData.bias}
+                        </Text>
+                      </View>
+                    ))}
+                  </View>
+                  <Text style={styles.metricsNote}>
+                    Continuous monitoring compares past model predictions with CPCB ground measurements recorded once target timestamps elapse.
+                  </Text>
+                </>
+              ) : (
+                <Text style={[styles.metricsNote, { fontStyle: 'italic', marginTop: 8 }]}>
+                  Awaiting elapsed target timestamps to compute rolling verification metrics against incoming CPCB ground observations.
+                </Text>
+              )}
             </View>
           </>
         )}

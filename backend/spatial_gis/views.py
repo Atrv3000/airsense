@@ -16,7 +16,8 @@ def get_latest_station_readings():
 
     for station in active_stations:
         latest_aqi = AQIRecord.objects.filter(station=station).order_by('-recorded_at').first()
-        if latest_aqi and latest_aqi.overall_aqi is not None:
+        # CPCB rule: only records meeting valid criteria (min 3 pollutants, one PM) drive hotspots
+        if latest_aqi and latest_aqi.overall_aqi is not None and latest_aqi.valid_criteria_met:
             stations_data.append({
                 'station_id': station.station_id,
                 'name': station.name,
@@ -113,3 +114,20 @@ def interactive_map_view(request):
     Renders the interactive Leaflet GIS map preview for web browser testing and viva demos.
     """
     return render(request, 'spatial_gis/mumbai_map.html')
+
+
+class SpatialValidationAPIView(APIView):
+    """
+    Returns Leave-One-Station-Out Cross-Validation (LOSOCV) metrics comparing
+    IDW (p=1, 2, 3), Ordinary Kriging, and Spatial GBM on active Mumbai station readings.
+    """
+    def get(self, request):
+        from .services.spatial_validator import SpatialValidator
+        stations = get_latest_station_readings()
+        if not stations or len(stations) < 3:
+            return Response({
+                "message": "Insufficient station observations to execute spatial cross-validation."
+            }, status=status.HTTP_200_OK)
+
+        benchmark = SpatialValidator.compare_interpolators(stations)
+        return Response(benchmark, status=status.HTTP_200_OK)

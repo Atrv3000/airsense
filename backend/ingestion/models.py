@@ -8,6 +8,7 @@ class RawMeasurement(models.Model):
     """
     SOURCE_CHOICES = [
         ('CPCB_OFFICIAL', 'Central Pollution Control Board Official CAAQMS'),
+        ('WAQI_FEED', 'World Air Quality Index (WAQI / aqicn) Feed'),
         ('OPENAQ_MEASURED', 'OpenAQ Ground Station Measured'),
         ('OPEN_METEO_MODELLED', 'Open-Meteo Modelled / Fallback'),
     ]
@@ -61,6 +62,8 @@ class CleanMeasurement(models.Model):
     Preprocessed from RawMeasurement.
     """
     SOURCE_CHOICES = [
+        ('CPCB_OFFICIAL', 'Central Pollution Control Board Official CAAQMS'),
+        ('WAQI_FEED', 'World Air Quality Index (WAQI / aqicn) Feed'),
         ('OPENAQ_MEASURED', 'OpenAQ Ground Station Measured'),
         ('OPEN_METEO_MODELLED', 'Open-Meteo Modelled / Fallback'),
     ]

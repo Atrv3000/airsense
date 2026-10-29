@@ -17,11 +17,16 @@ class AQIService:
     """
 
     @classmethod
-    def get_averaged_concentrations(cls, station, target_time) -> dict:
+    def get_averaged_concentrations(cls, station, target_time) -> tuple[dict, bool, dict]:
         """
         Calculates 24-hour averages for PM2.5, PM10, NO2, SO2 and
-        8-hour rolling averages for CO, O3 up to target_time.
-        Falls back to instantaneous concentration if history is sparse.
+        8-hour rolling averages for CO, O3 up to target_time following CPCB standards:
+          - PM2.5, PM10, NO2, SO2: at least 16 of 24 hours required (>= 66.7% completeness).
+          - CO, O3: at least 6 of 8 hours required (>= 75.0% completeness).
+        Falls back to instantaneous concentration if history is sparse (<16h or <6h)
+        and explicitly flags the fallback.
+        Returns:
+          (pollutants_dict, is_instantaneous_fallback, sufficiency_flags)
         """
         # Look back 24 hours
         time_24h_ago = target_time - timedelta(hours=23)
@@ -42,32 +47,66 @@ class AQIService:
                 recorded_at__lte=target_time
             ).order_by('recorded_at')
 
-        count_24h = records_24h.count()
         latest_record = records_24h.last()
-
         if not latest_record:
-            return {}
+            return {}, True, {}
+
+        pollutants = {}
+        sufficiency = {}
+        is_fallback = False
 
         # 24-hour aggregations for PM2.5, PM10, NO2, SO2 (CPCB standard: min 16 hours)
-        pollutants = {}
         for p in ['pm25', 'pm10', 'no2', 'so2']:
             valid_vals = [getattr(r, p) for r in records_24h if getattr(r, p) is not None]
-            # If at least 4 hours available in history, use rolling mean, else latest
-            if len(valid_vals) >= 4:
-                pollutants[p] = round(sum(valid_vals) / len(valid_vals), 2)
-            else:
-                pollutants[p] = getattr(latest_record, p)
+            n_valid = len(valid_vals)
+            latest_val = getattr(latest_record, p)
 
-        # 8-hour rolling aggregations for CO, O3
+            if n_valid >= 16:
+                pollutants[p] = round(sum(valid_vals) / n_valid, 2)
+                sufficiency[p] = {
+                    "valid_hours": n_valid,
+                    "required_hours": 16,
+                    "is_sufficient": True,
+                    "method": "24h_average"
+                }
+            else:
+                pollutants[p] = latest_val
+                if latest_val is not None:
+                    is_fallback = True
+                sufficiency[p] = {
+                    "valid_hours": n_valid,
+                    "required_hours": 16,
+                    "is_sufficient": False,
+                    "method": "instantaneous_fallback"
+                }
+
+        # 8-hour rolling aggregations for CO, O3 (CPCB standard: min 6 hours)
         records_8h = [r for r in records_24h if r.recorded_at >= time_8h_ago]
         for p in ['co', 'o3']:
             valid_vals = [getattr(r, p) for r in records_8h if getattr(r, p) is not None]
-            if len(valid_vals) >= 2:
-                pollutants[p] = round(sum(valid_vals) / len(valid_vals), 2)
-            else:
-                pollutants[p] = getattr(latest_record, p)
+            n_valid = len(valid_vals)
+            latest_val = getattr(latest_record, p)
 
-        return pollutants
+            if n_valid >= 6:
+                pollutants[p] = round(sum(valid_vals) / n_valid, 2)
+                sufficiency[p] = {
+                    "valid_hours": n_valid,
+                    "required_hours": 6,
+                    "is_sufficient": True,
+                    "method": "8h_average"
+                }
+            else:
+                pollutants[p] = latest_val
+                if latest_val is not None:
+                    is_fallback = True
+                sufficiency[p] = {
+                    "valid_hours": n_valid,
+                    "required_hours": 6,
+                    "is_sufficient": False,
+                    "method": "instantaneous_fallback"
+                }
+
+        return pollutants, is_fallback, sufficiency
 
     @classmethod
     def calculate_for_measurement(cls, raw_measurement: RawMeasurement) -> AQIRecord:
@@ -75,7 +114,7 @@ class AQIService:
         Calculates and stores NAQI for a single RawMeasurement instance
         using CPCB standard multi-hour averaging where historical data is present.
         """
-        averaged_pollutants = cls.get_averaged_concentrations(
+        averaged_pollutants, is_fallback, sufficiency = cls.get_averaged_concentrations(
             station=raw_measurement.station,
             target_time=raw_measurement.recorded_at
         )
@@ -90,6 +129,7 @@ class AQIService:
                 'co': raw_measurement.co,
                 'o3': raw_measurement.o3,
             }
+            is_fallback = True
 
         calc_result = CPCBCalculator.calculate_overall_aqi(averaged_pollutants)
         subs = calc_result['sub_indices']
@@ -108,6 +148,8 @@ class AQIService:
             'aqi_category': calc_result['category'],
             'color_hex': calc_result['color_hex'],
             'valid_criteria_met': calc_result['valid_criteria_met'],
+            'is_instantaneous_fallback': is_fallback,
+            'data_sufficiency_flags': sufficiency,
         }
 
         aqi_rec, _ = AQIRecord.objects.update_or_create(

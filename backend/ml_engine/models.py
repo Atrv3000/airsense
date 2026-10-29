@@ -22,12 +22,21 @@ class ForecastRecord(models.Model):
     expected_error_band = models.FloatField(default=15.0, help_text="Uncertainty residual interval (+/-) derived from validation")
     model_version = models.CharField(max_length=64, default="Random_Forest_v1")
 
+    # Forecast Verification & Drift Monitoring
+    actual_aqi = models.FloatField(null=True, blank=True, help_text="Observed ground truth AQI from AQIRecord")
+    absolute_error = models.FloatField(null=True, blank=True, help_text="|predicted_aqi - actual_aqi|")
+    signed_error = models.FloatField(null=True, blank=True, help_text="predicted_aqi - actual_aqi (positive=overprediction, negative=underprediction)")
+    is_verified = models.BooleanField(default=False, db_index=True, help_text="True if ground truth observation has been evaluated")
+    verified_at = models.DateTimeField(null=True, blank=True, help_text="Timestamp when verification was performed")
+
     class Meta:
         ordering = ['station', 'target_time']
         unique_together = ('station', 'made_at', 'horizon')
         indexes = [
             models.Index(fields=['station', 'target_time']),
             models.Index(fields=['target_time', 'horizon']),
+            models.Index(fields=['is_verified', 'target_time']),
+            models.Index(fields=['horizon', 'is_verified']),
         ]
         verbose_name = 'Forecast Record'
         verbose_name_plural = 'Forecast Records'

@@ -39,14 +39,19 @@ class TriggerIngestionAPIView(APIView):
     Protected by secret key check when INGESTION_SECRET_KEY is configured.
     """
     def post(self, request):
-        required_secret = getattr(settings, 'INGESTION_SECRET_KEY', '') or os.getenv('INGESTION_SECRET_KEY', '')
-        if required_secret:
-            provided_secret = request.headers.get('X-Ingestion-Key') or request.data.get('secret_key')
-            if provided_secret != required_secret:
-                return Response(
-                    {"error": "Unauthorized. Invalid or missing ingestion secret key."},
-                    status=status.HTTP_403_FORBIDDEN
-                )
+        required_secret = getattr(settings, 'INGESTION_SECRET_KEY', None) or os.getenv('INGESTION_SECRET_KEY')
+        if not required_secret:
+            return Response(
+                {"error": "Server misconfiguration: INGESTION_SECRET_KEY is not defined."},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+        provided_secret = request.headers.get('X-Ingestion-Key') or request.data.get('secret_key')
+        if not provided_secret or provided_secret != required_secret:
+            return Response(
+                {"error": "Unauthorized. A valid ingestion secret key is required via X-Ingestion-Key header or secret_key parameter."},
+                status=status.HTTP_403_FORBIDDEN
+            )
 
         days = request.data.get('days', 2)
         try:

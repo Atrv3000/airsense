@@ -3,23 +3,30 @@ import Constants from 'expo-constants';
 import { Platform } from 'react-native';
 
 function getApiBaseUrl() {
-  if (process.env.EXPO_PUBLIC_API_URL) {
-    return process.env.EXPO_PUBLIC_API_URL;
+  const envUrl = process.env.EXPO_PUBLIC_API_URL;
+  if (envUrl) {
+    return envUrl.replace(/\/+$/, '');
   }
 
-  const hostUri = Constants.expoConfig?.hostUri;
-  if (hostUri) {
-    const ip = hostUri.split(':')[0];
-    if (ip) {
-      return `http://${ip}:8000`;
+  // Support local development server resolution if running under Expo Go / local web
+  const isDev = typeof __DEV__ !== 'undefined' ? __DEV__ : true;
+  if (isDev) {
+    const hostUri = Constants.expoConfig?.hostUri;
+    if (hostUri) {
+      const ip = hostUri.split(':')[0];
+      if (ip) {
+        return `http://${ip}:8000`;
+      }
+    }
+    if (Platform.OS === 'web') {
+      return 'http://127.0.0.1:8000';
     }
   }
 
-  if (Platform.OS === 'web') {
-    return 'http://127.0.0.1:8000';
-  }
-
-  return 'http://192.168.0.100:8000';
+  throw new Error(
+    '[AirSense Configuration Error] Missing EXPO_PUBLIC_API_URL environment variable. ' +
+    'Please set EXPO_PUBLIC_API_URL in your environment (e.g. EXPO_PUBLIC_API_URL=http://<host>:8000 or https://api.airsense.yourdomain.com).'
+  );
 }
 
 export const API_BASE_URL = getApiBaseUrl();
@@ -32,11 +39,13 @@ export const ENDPOINTS = {
   liveAqi:       `${API_BASE_URL}/api/v1/aqi/live/`,
   stationAqi:    (id) => `${API_BASE_URL}/api/v1/aqi/station/${id}/`,
   historicalAqi: `${API_BASE_URL}/api/v1/aqi/historical/`,
-  predict:       `${API_BASE_URL}/api/v1/ml/predict/`,
-  modelMetrics:  `${API_BASE_URL}/api/v1/ml/models/`,
-  mapLayers:     `${API_BASE_URL}/api/v1/gis/map-layers/`,
-  hotspots:      `${API_BASE_URL}/api/v1/gis/hotspots/`,
-  alerts:        `${API_BASE_URL}/api/v1/alerts/`,
+  predict:              `${API_BASE_URL}/api/v1/ml/predict/`,
+  modelMetrics:         `${API_BASE_URL}/api/v1/ml/models/`,
+  forecastVerification: `${API_BASE_URL}/api/v1/ml/verification/`,
+  mapLayers:            `${API_BASE_URL}/api/v1/gis/map-layers/`,
+  hotspots:             `${API_BASE_URL}/api/v1/gis/hotspots/`,
+  alerts:               `${API_BASE_URL}/api/v1/alerts/`,
+  deviceToken:          `${API_BASE_URL}/api/v1/alerts/device-token/`,
 };
 
 export const MUMBAI_MAP_CENTER = {

@@ -99,3 +99,29 @@ class ModelMetricsAPIView(APIView):
             return Response(metadata, status=status.HTTP_200_OK)
         except Exception as e:
             return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class ForecastVerificationAPIView(APIView):
+    """
+    Returns rolling forecast verification metrics (MAE, RMSE, bias) per horizon
+    over the requested lookback window (default 7 days).
+    Also accepts an optional 'verify=true' parameter to trigger on-demand evaluation.
+    """
+    def get(self, request):
+        days_param = request.query_params.get('days', 7)
+        station_id = request.query_params.get('station_id')
+        trigger_verify = request.query_params.get('verify', 'false').lower() in ['true', '1', 'yes']
+
+        try:
+            days = int(days_param)
+            days = max(1, min(90, days))
+        except ValueError:
+            days = 7
+
+        from .services.forecast_verifier import ForecastVerifier
+
+        if trigger_verify:
+            ForecastVerifier.verify_past_forecasts(station_id=station_id)
+
+        metrics = ForecastVerifier.get_rolling_metrics(days=days, station_id=station_id)
+        return Response(metrics, status=status.HTTP_200_OK)

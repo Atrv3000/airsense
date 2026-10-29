@@ -3,6 +3,7 @@ Django settings for AirSense Mumbai project.
 """
 
 import os
+import sys
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -17,15 +18,33 @@ if env_path.exists():
 else:
     load_dotenv(dotenv_path=BASE_DIR / '.env')
 
-# Quick-start development settings - unsuitable for production
-SECRET_KEY = os.getenv('SECRET_KEY', 'django-insecure-airsense-mumbai-aqi-fallback-key')
+from django.core.exceptions import ImproperlyConfigured
+
+# Detect if running in test environment (e.g. pytest / test command)
+IS_TESTING = ('pytest' in sys.modules) or ('test' in sys.argv)
+
 DEBUG = os.getenv('DEBUG', 'False').lower() in ('true', '1', 'yes')
 
-if DEBUG:
-    allowed_hosts_raw = os.getenv('ALLOWED_HOSTS', 'localhost,127.0.0.1,10.0.2.2,*')
+# Secret Key Configuration
+SECRET_KEY = os.getenv('SECRET_KEY')
+if not SECRET_KEY:
+    if DEBUG or IS_TESTING:
+        SECRET_KEY = 'django-insecure-dev-fallback-key-only-for-local-debugging'
+    else:
+        raise ImproperlyConfigured(
+            "CRITICAL SECURITY ERROR: SECRET_KEY environment variable is required in production."
+        )
+
+# Allowed Hosts Configuration (Strictly restricted to env values in production)
+allowed_hosts_raw = os.getenv('ALLOWED_HOSTS')
+if allowed_hosts_raw:
+    ALLOWED_HOSTS = [host.strip() for host in allowed_hosts_raw.split(',') if host.strip()]
+elif DEBUG or IS_TESTING:
+    ALLOWED_HOSTS = ['localhost', '127.0.0.1', '10.0.2.2', '[::1]', 'testserver', '*']
 else:
-    allowed_hosts_raw = os.getenv('ALLOWED_HOSTS', 'localhost,127.0.0.1,10.0.2.2')
-ALLOWED_HOSTS = [host.strip() for host in allowed_hosts_raw.split(',') if host.strip()]
+    raise ImproperlyConfigured(
+        "CRITICAL SECURITY ERROR: ALLOWED_HOSTS environment variable must be set in production."
+    )
 
 # Application definition
 INSTALLED_APPS = [
@@ -83,7 +102,14 @@ WSGI_APPLICATION = 'airsense_backend.wsgi.application'
 # Database Configuration (PostgreSQL 16/18)
 DB_NAME = os.getenv('DB_NAME', 'airsense_db')
 DB_USER = os.getenv('DB_USER', 'postgres')
-DB_PASSWORD = os.getenv('DB_PASSWORD', 'abcd1234')
+DB_PASSWORD = os.getenv('DB_PASSWORD')
+if DB_PASSWORD is None:
+    if DEBUG or IS_TESTING:
+        DB_PASSWORD = 'postgres'
+    else:
+        raise ImproperlyConfigured(
+            "CRITICAL SECURITY ERROR: DB_PASSWORD environment variable is required in production."
+        )
 DB_HOST = os.getenv('DB_HOST', 'localhost')
 DB_PORT = os.getenv('DB_PORT', '5432')
 
@@ -120,7 +146,7 @@ MEDIA_ROOT = BASE_DIR / 'media'
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
-# Django REST Framework Settings
+# Django REST Framework Settings with Rate Throttling
 REST_FRAMEWORK = {
     'DEFAULT_PERMISSION_CLASSES': [
         'rest_framework.permissions.AllowAny',
@@ -129,14 +155,38 @@ REST_FRAMEWORK = {
         'rest_framework.renderers.JSONRenderer',
         'rest_framework.renderers.BrowsableAPIRenderer',
     ],
+    'DEFAULT_THROTTLE_CLASSES': [
+        'rest_framework.throttling.AnonRateThrottle',
+        'rest_framework.throttling.UserRateThrottle',
+    ],
+    'DEFAULT_THROTTLE_RATES': {
+        'anon': os.getenv('DRF_THROTTLE_ANON', '120/min'),
+        'user': os.getenv('DRF_THROTTLE_USER', '600/min'),
+    },
 }
 
 # Cross-Origin Resource Sharing (CORS) for Mobile & Web
-CORS_ALLOW_ALL_ORIGINS = True  # Required for mobile simulator/LAN Expo app access
+cors_origins_env = os.getenv('CORS_ALLOWED_ORIGINS')
+if cors_origins_env:
+    CORS_ALLOWED_ORIGINS = [orig.strip() for orig in cors_origins_env.split(',') if orig.strip()]
+    CORS_ALLOW_ALL_ORIGINS = False
+elif DEBUG or IS_TESTING:
+    CORS_ALLOW_ALL_ORIGINS = True
+else:
+    CORS_ALLOW_ALL_ORIGINS = False
+    CORS_ALLOWED_ORIGINS = []
+
 CORS_ALLOW_CREDENTIALS = True
 
-# Ingestion trigger secret key (optional protection token)
-INGESTION_SECRET_KEY = os.getenv('INGESTION_SECRET_KEY', '')
+# Ingestion trigger secret key (always required for ingestion API endpoints)
+INGESTION_SECRET_KEY = os.getenv('INGESTION_SECRET_KEY')
+if not INGESTION_SECRET_KEY:
+    if DEBUG or IS_TESTING:
+        INGESTION_SECRET_KEY = 'dev-secret-ingestion-token-airsense'
+    else:
+        raise ImproperlyConfigured(
+            "CRITICAL SECURITY ERROR: INGESTION_SECRET_KEY environment variable must be set in production."
+        )
 
 # ML Models Directory
 ML_MODELS_DIR = BASE_DIR / 'ml_engine' / 'saved_models'
