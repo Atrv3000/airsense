@@ -51,6 +51,41 @@ class MapLayerService:
             ).select_related('station', 'raw_measurement').order_by('-recorded_at').first()
 
             if not latest_aqi or latest_aqi.overall_aqi is None:
+                station_features.append({
+                    "type": "Feature",
+                    "geometry": {
+                        "type": "Point",
+                        "coordinates": [station.longitude, station.latitude]
+                    },
+                    "properties": {
+                        "layer": "station",
+                        "station_id": station.station_id,
+                        "name": station.name,
+                        "zone_type": station.zone_type,
+                        "recorded_at": None,
+                        "source": getattr(station, 'source', 'CAAQMS_STATION'),
+                        "is_measured": False,
+                        "source_label": "Monitoring Station (Current Reading Unavailable)",
+                        "current_aqi": None,
+                        "reading_available": False,
+                        "prominent_pollutant": None,
+                        "category": "Unavailable",
+                        "color_hex": "#64748b",
+                        "valid_criteria_met": False,
+                        "is_instantaneous_fallback": False,
+                        "pm25": None,
+                        "pm10": None,
+                        "no2": None,
+                        "so2": None,
+                        "co": None,
+                        "o3": None,
+                        "temperature": None,
+                        "humidity": None,
+                        "wind_speed": None,
+                        "wind_direction": None,
+                        "forecast_24h": []
+                    }
+                })
                 continue
 
             current_aqi = latest_aqi.overall_aqi
@@ -173,6 +208,23 @@ class MapLayerService:
             else:
                 predicted_hotspots[f"plus_{h}h"] = {"type": "FeatureCollection", "features": []}
 
+        # Full interpolated spatial grids for continuous gradient rendering
+        grid_geojson = HotspotDetector.get_full_interpolated_grid_geojson(
+            known_stations=known_stations_current,
+            resolution=20
+        ) if known_stations_current else {"type": "FeatureCollection", "features": []}
+
+        predicted_grids = {}
+        for h in [3, 6, 24]:
+            h_stations = horizon_stations.get(h, [])
+            if h_stations:
+                predicted_grids[f"plus_{h}h"] = HotspotDetector.get_full_interpolated_grid_geojson(
+                    known_stations=h_stations,
+                    resolution=20
+                )
+            else:
+                predicted_grids[f"plus_{h}h"] = {"type": "FeatureCollection", "features": []}
+
         # Build CPCB Legend metadata
         legend = []
         for min_v, max_v, name, color in CATEGORY_CONFIG:
@@ -193,5 +245,7 @@ class MapLayerService:
                 "features": station_features
             },
             "hotspots_geojson": current_hotspots,
-            "predicted_hotspots": predicted_hotspots
+            "predicted_hotspots": predicted_hotspots,
+            "grid_geojson": grid_geojson,
+            "predicted_grids": predicted_grids
         }
