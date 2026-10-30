@@ -9,9 +9,10 @@ import {
   View, Text, StyleSheet, ScrollView, RefreshControl
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFetch } from '../hooks/useFetch';
-import { LoadingCard, SectionHeader, getAQIColor } from '../components/SharedComponents';
-import { ENDPOINTS, THEME, CPCB_COLORS } from '../config';
+import { LoadingCard, ErrorCard, ErrorBanner, SectionHeader, getAQIColor } from '../components/SharedComponents';
+import { ENDPOINTS, THEME, CPCB_COLORS, TYPOGRAPHY, SPACING } from '../config';
 
 const CPCB_TIERS = [
   {
@@ -84,6 +85,7 @@ const PRECAUTIONARY_PROTOCOLS = [
 ];
 
 export default function AlertsScreen() {
+  const insets = useSafeAreaInsets();
   const liveAqi = useFetch(ENDPOINTS.liveAqi);
   const alertsFetch = useFetch(ENDPOINTS.alerts);
   const [refreshing, setRefreshing] = useState(false);
@@ -115,17 +117,24 @@ export default function AlertsScreen() {
         }
       >
         {/* Header Title */}
-        <View style={styles.headerBar}>
+        <View style={[styles.headerBar, { paddingTop: Math.max(16, insets.top) }]}>
           <Text style={styles.headerSubtitle}>Public Health Guidelines</Text>
           <Text style={styles.headerTitle}>Advisories & Protocols</Text>
         </View>
+
+        {/* Failed background refresh notification */}
+        {(liveAqi.error || alertsFetch.error) && (liveAqi.data || alertsFetch.data) && (
+          <ErrorBanner message={liveAqi.error || alertsFetch.error} onRetry={onRefresh} />
+        )}
 
         {/* Current City Status Card */}
         <View style={[styles.statusCard, { borderLeftColor: cityColor }]}>
           <View style={styles.statusHeader}>
             <View style={{ flex: 1 }}>
               <Text style={styles.statusLabel}>Current Ambient Tier</Text>
-              <Text style={styles.statusCategory}>{cityCat || (liveAqi.loading ? 'Assessing...' : 'No data')}</Text>
+              <Text style={styles.statusCategory}>
+                {cityCat || (liveAqi.loading ? 'Assessing...' : (liveAqi.error ? 'Unavailable' : 'Observation Pending'))}
+              </Text>
             </View>
             <View style={styles.statusScoreWrap}>
               <Text style={[styles.statusScore, { color: cityColor }]}>
@@ -146,6 +155,8 @@ export default function AlertsScreen() {
         />
         {alertsFetch.loading ? (
           <LoadingCard message="Checking active sensor warnings..." />
+        ) : alertsFetch.error ? (
+          <ErrorCard message={alertsFetch.error} onRetry={alertsFetch.refetch} />
         ) : activeAlerts.length > 0 ? (
           activeAlerts.map((alert) => {
             const isForecast = alert.is_forecast_alert;
@@ -156,7 +167,7 @@ export default function AlertsScreen() {
               <View key={alert.id} style={[styles.alertNotificationCard, { borderLeftColor: alertColor }]}>
                 <View style={styles.alertHeaderRow}>
                   <View style={{ flex: 1 }}>
-                    <Text style={styles.alertStationName}>{alert.station_name || alert.station_code || alert.station_id}</Text>
+                    <Text style={styles.alertStationName} numberOfLines={1}>{alert.station_name || alert.station_code || alert.station_id}</Text>
                     <Text style={styles.alertTypeTag}>
                       {isForecast ? `Forecast Warning (+${alert.forecast_horizon_hours}h Horizon)` : 'Active Observed Exceedance'}
                     </Text>
@@ -239,16 +250,11 @@ const styles = StyleSheet.create({
   },
   headerSubtitle: {
     color: THEME.textMuted,
-    fontSize: 12,
-    fontWeight: '500',
-    letterSpacing: 0.3,
-    textTransform: 'uppercase',
+    ...TYPOGRAPHY.pageSubtitle,
   },
   headerTitle: {
     color: THEME.textPrimary,
-    fontSize: 22,
-    fontWeight: '800',
-    letterSpacing: -0.4,
+    ...TYPOGRAPHY.pageTitle,
     marginTop: 2,
   },
   statusCard: {
@@ -270,9 +276,7 @@ const styles = StyleSheet.create({
   },
   statusLabel: {
     color: THEME.textMuted,
-    fontSize: 11,
-    fontWeight: '600',
-    textTransform: 'uppercase',
+    ...TYPOGRAPHY.overline,
   },
   statusCategory: {
     color: THEME.textPrimary,
@@ -284,18 +288,15 @@ const styles = StyleSheet.create({
     alignItems: 'flex-end',
   },
   statusScore: {
-    fontSize: 28,
-    fontWeight: '800',
+    ...TYPOGRAPHY.statAqi,
   },
   statusScoreLabel: {
     color: THEME.textMuted,
-    fontSize: 10,
-    fontWeight: '600',
+    ...TYPOGRAPHY.overline,
   },
   statusExplanation: {
     color: THEME.textSecondary,
-    fontSize: 12,
-    lineHeight: 17,
+    ...TYPOGRAPHY.bodySecondary,
   },
   alertNotificationCard: {
     backgroundColor: THEME.surface,
@@ -316,28 +317,25 @@ const styles = StyleSheet.create({
   },
   alertStationName: {
     color: THEME.textPrimary,
-    fontSize: 14,
-    fontWeight: '700',
+    ...TYPOGRAPHY.cardTitle,
   },
   alertTypeTag: {
     color: THEME.textMuted,
-    fontSize: 11,
+    ...TYPOGRAPHY.caption,
     marginTop: 2,
   },
   alertScoreBadge: {
     paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 6,
+    paddingVertical: 4,
+    borderRadius: THEME.radiusXs,
   },
   alertScoreText: {
     color: '#ffffff',
-    fontSize: 11,
-    fontWeight: '800',
+    ...TYPOGRAPHY.badge,
   },
   alertMessage: {
     color: THEME.textSecondary,
-    fontSize: 12,
-    lineHeight: 17,
+    ...TYPOGRAPHY.bodySecondary,
   },
   allClearCard: {
     backgroundColor: THEME.surface,
@@ -353,9 +351,8 @@ const styles = StyleSheet.create({
   },
   allClearText: {
     color: THEME.textSecondary,
-    fontSize: 12,
+    ...TYPOGRAPHY.bodySecondary,
     flex: 1,
-    lineHeight: 16,
   },
   tierCard: {
     backgroundColor: THEME.surface,
@@ -375,23 +372,20 @@ const styles = StyleSheet.create({
   tierColorBar: {
     width: 3,
     height: 16,
-    borderRadius: 2,
+    borderRadius: THEME.radiusXs,
   },
   tierTitle: {
     color: THEME.textPrimary,
-    fontSize: 14,
-    fontWeight: '700',
+    ...TYPOGRAPHY.cardTitle,
     flex: 1,
   },
   tierRange: {
     color: THEME.textMuted,
-    fontSize: 11,
-    fontWeight: '600',
+    ...TYPOGRAPHY.captionBold,
   },
   tierSummary: {
     color: THEME.textSecondary,
-    fontSize: 12,
-    lineHeight: 16,
+    ...TYPOGRAPHY.bodySecondary,
   },
   tierGroupGrid: {
     marginTop: 6,
@@ -405,15 +399,11 @@ const styles = StyleSheet.create({
   },
   tierGroupLabel: {
     color: THEME.textMuted,
-    fontSize: 10,
-    fontWeight: '700',
-    textTransform: 'uppercase',
-    letterSpacing: 0.3,
+    ...TYPOGRAPHY.overline,
   },
   tierGroupText: {
     color: THEME.textSecondary,
-    fontSize: 12,
-    lineHeight: 16,
+    ...TYPOGRAPHY.bodySecondary,
   },
   protocolCard: {
     backgroundColor: THEME.surface,
@@ -432,12 +422,10 @@ const styles = StyleSheet.create({
   },
   protocolTitle: {
     color: THEME.textPrimary,
-    fontSize: 13,
-    fontWeight: '700',
+    ...TYPOGRAPHY.cardTitle,
   },
   protocolDesc: {
     color: THEME.textSecondary,
-    fontSize: 12,
-    lineHeight: 17,
+    ...TYPOGRAPHY.body,
   },
 });

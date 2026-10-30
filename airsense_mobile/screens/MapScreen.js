@@ -13,7 +13,9 @@ import React, { useState, useMemo, useCallback } from 'react';
 import { View, Text, StyleSheet, ActivityIndicator, TouchableOpacity } from 'react-native';
 import { WebView } from 'react-native-webview';
 import { Ionicons } from '@expo/vector-icons';
-import { ENDPOINTS, THEME, HOTSPOT_THRESHOLD } from '../config';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { ErrorBanner } from '../components/SharedComponents';
+import { ENDPOINTS, THEME, HOTSPOT_THRESHOLD, TYPOGRAPHY, SPACING } from '../config';
 
 const HORIZONS = [
   { id: 'current', label: 'Current' },
@@ -23,19 +25,24 @@ const HORIZONS = [
 ];
 
 export default function MapScreen() {
+  const insets = useSafeAreaInsets();
   const [key, setKey] = useState(1);
   const [horizon, setHorizon] = useState('current');
   const [aqiRange, setAqiRange] = useState({ min: 40, max: 280, count: 15 });
+  const [mapError, setMapError] = useState(null);
 
   const handleMessage = useCallback((event) => {
     try {
       const payload = JSON.parse(event.nativeEvent.data);
       if (payload && payload.type === 'RANGE_UPDATE') {
+        setMapError(null);
         setAqiRange({
           min: payload.minAqi ?? 0,
           max: payload.maxAqi ?? 250,
           count: payload.stationCount ?? 15,
         });
+      } else if (payload && payload.type === 'MAP_ERROR') {
+        setMapError(payload.error || 'Failed to retrieve spatial GIS layers');
       }
     } catch (e) {
       // Ignore non-json WebView messages
@@ -480,7 +487,15 @@ export default function MapScreen() {
                     }));
                 }
             })
-            .catch(err => console.error('Map loading error:', err));
+            .catch(err => {
+                console.error('Map loading error:', err);
+                if (window.ReactNativeWebView && window.ReactNativeWebView.postMessage) {
+                    window.ReactNativeWebView.postMessage(JSON.stringify({
+                        type: 'MAP_ERROR',
+                        error: 'Unable to render spatial gradient: ' + (err.message || 'Map tiles or layer service unreachable')
+                    }));
+                }
+            });
     </script>
 </body>
 </html>
@@ -489,7 +504,7 @@ export default function MapScreen() {
   return (
     <View style={styles.container}>
       {/* Mobile Control Header */}
-      <View style={styles.header}>
+      <View style={[styles.header, { paddingTop: Math.max(16, insets.top) }]}>
         <View>
           <Text style={styles.headerTitle}>Spatial GIS Map</Text>
           <Text style={styles.headerSubtitle}>
@@ -498,13 +513,29 @@ export default function MapScreen() {
         </View>
         <TouchableOpacity
           style={styles.reloadBtn}
-          onPress={() => setKey(k => k + 1)}
+          onPress={() => {
+            setMapError(null);
+            setKey(k => k + 1);
+          }}
           activeOpacity={0.7}
+          accessibilityRole="button"
+          accessibilityLabel="Reload spatial map layers and station markers"
         >
           <Ionicons name="refresh-outline" size={16} color={THEME.textSecondary} />
-          <Text style={styles.reloadText}>Refresh</Text>
+          <Text style={styles.reloadText}>Reload Map</Text>
         </TouchableOpacity>
       </View>
+
+      {/* Map Error Banner with Retry */}
+      {mapError && (
+        <ErrorBanner
+          message={mapError}
+          onRetry={() => {
+            setMapError(null);
+            setKey(k => k + 1);
+          }}
+        />
+      )}
 
       {/* Horizon Selector Bar */}
       <View style={styles.horizonBar}>
@@ -518,6 +549,8 @@ export default function MapScreen() {
                 style={[styles.horizonBtn, active && styles.horizonBtnActive]}
                 onPress={() => setHorizon(h.id)}
                 activeOpacity={0.7}
+                accessibilityRole="tab"
+                accessibilityLabel={`Forecast horizon: ${h.label}`}
               >
                 <Text style={[styles.horizonBtnText, active && styles.horizonBtnTextActive]}>
                   {h.label}
@@ -540,9 +573,9 @@ export default function MapScreen() {
           onMessage={handleMessage}
           startInLoadingState={true}
           renderLoading={() => (
-            <View style={styles.loadingContainer}>
+            <View style={styles.loadingContainer} accessibilityRole="progressbar" accessibilityLabel="Rendering continuous spatial AQI gradient">
               <ActivityIndicator size="small" color={THEME.primaryLight} />
-              <Text style={styles.loadingText}>Rendering spatial gradient...</Text>
+              <Text style={styles.loadingText}>Rendering continuous spatial AQI gradient...</Text>
             </View>
           )}
         />
@@ -605,30 +638,30 @@ const styles = StyleSheet.create({
   },
   headerTitle: {
     color: THEME.textPrimary,
-    fontSize: 16,
-    fontWeight: '700',
-    letterSpacing: -0.2,
+    fontSize: 20,
+    fontWeight: '800',
+    letterSpacing: -0.3,
   },
   headerSubtitle: {
     color: THEME.textMuted,
-    fontSize: 11,
+    ...TYPOGRAPHY.caption,
     marginTop: 2,
   },
   reloadBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
+    gap: 6,
     backgroundColor: THEME.surface,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    minHeight: 36,
     borderRadius: THEME.radiusSm,
     borderWidth: 1,
     borderColor: THEME.border,
   },
   reloadText: {
     color: THEME.textSecondary,
-    fontSize: 11,
-    fontWeight: '600',
+    ...TYPOGRAPHY.captionBold,
   },
   horizonBar: {
     flexDirection: 'row',
@@ -643,9 +676,7 @@ const styles = StyleSheet.create({
   },
   horizonLabel: {
     color: THEME.textMuted,
-    fontSize: 11,
-    fontWeight: '700',
-    textTransform: 'uppercase',
+    ...TYPOGRAPHY.overline,
   },
   horizonButtons: {
     flexDirection: 'row',
@@ -653,9 +684,12 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   horizonBtn: {
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    minHeight: 32,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderRadius: THEME.radiusXs,
     backgroundColor: THEME.surfaceElevated,
     borderWidth: 1,
     borderColor: THEME.border,
@@ -666,8 +700,7 @@ const styles = StyleSheet.create({
   },
   horizonBtnText: {
     color: THEME.textSecondary,
-    fontSize: 11,
-    fontWeight: '600',
+    ...TYPOGRAPHY.captionBold,
   },
   horizonBtnTextActive: {
     color: '#ffffff',
@@ -707,20 +740,16 @@ const styles = StyleSheet.create({
   },
   legendLabel: {
     color: THEME.textMuted,
-    fontSize: 10,
-    fontWeight: '600',
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
+    ...TYPOGRAPHY.overline,
   },
   legendSubtext: {
     color: THEME.textSecondary,
-    fontSize: 10,
-    fontWeight: '600',
+    ...TYPOGRAPHY.subBadge,
   },
   legendScale: {
     flexDirection: 'row',
     height: 6,
-    borderRadius: 3,
+    borderRadius: THEME.radiusXs,
     overflow: 'hidden',
   },
   legendBlock: {
@@ -732,7 +761,7 @@ const styles = StyleSheet.create({
   },
   legendMarkText: {
     color: THEME.textMuted,
-    fontSize: 9,
+    ...TYPOGRAPHY.subBadge,
   },
   legendStationRow: {
     flexDirection: 'row',
@@ -751,7 +780,7 @@ const styles = StyleSheet.create({
   legendStationDot: {
     width: 18,
     height: 18,
-    borderRadius: 9,
+    borderRadius: THEME.radiusFull,
     backgroundColor: THEME.bg,
     borderWidth: 1.5,
     borderColor: THEME.primaryLight,
@@ -760,12 +789,11 @@ const styles = StyleSheet.create({
   },
   legendStationText: {
     color: THEME.textSecondary,
-    fontSize: 10,
-    fontWeight: '500',
+    ...TYPOGRAPHY.subBadge,
   },
   legendNormalizedNote: {
     color: THEME.textMuted,
-    fontSize: 9,
+    ...TYPOGRAPHY.subBadge,
     fontStyle: 'italic',
   },
 });

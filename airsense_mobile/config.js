@@ -80,7 +80,119 @@ export const THEME = {
   success:       '#10b981',
   warning:       '#f59e0b',
   error:         '#ef4444',
+  radiusXs:      4,
   radiusSm:      8,
   radiusMd:      12,
   radiusLg:      16,
+  radiusFull:    9999,
+};
+
+// Standard 4/8-point spacing and dimensional scale
+export const SPACING = {
+  xxs:  2,
+  xs:   4,
+  sm:   8,
+  md:   12,
+  lg:   16,
+  xl:   20,
+  xxl:  24,
+  xxxl: 32,
+};
+
+// Consistent typography scale and text hierarchy
+export const TYPOGRAPHY = {
+  // Display AQI Numbers
+  heroAqi: {
+    fontSize: 52,
+    fontWeight: '800',
+    letterSpacing: -1.5,
+  },
+  largeAqi: {
+    fontSize: 44,
+    fontWeight: '800',
+    letterSpacing: -1,
+  },
+  statAqi: {
+    fontSize: 28,
+    fontWeight: '800',
+    letterSpacing: -0.5,
+  },
+  cardAqi: {
+    fontSize: 18,
+    fontWeight: '800',
+  },
+
+  // Page & Section Headers
+  pageTitle: {
+    fontSize: 22,
+    fontWeight: '800',
+    letterSpacing: -0.4,
+    lineHeight: 28,
+  },
+  pageSubtitle: {
+    fontSize: 12,
+    fontWeight: '600',
+    letterSpacing: 0.5,
+    textTransform: 'uppercase',
+  },
+  sectionTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    letterSpacing: -0.2,
+    lineHeight: 20,
+  },
+  sectionSubtitle: {
+    fontSize: 12,
+    fontWeight: '400',
+    lineHeight: 16,
+  },
+  cardTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    lineHeight: 18,
+  },
+
+  // Body & Explanatory Copy
+  body: {
+    fontSize: 13,
+    fontWeight: '400',
+    lineHeight: 18,
+  },
+  bodyMedium: {
+    fontSize: 13,
+    fontWeight: '600',
+    lineHeight: 18,
+  },
+  bodySecondary: {
+    fontSize: 12,
+    fontWeight: '400',
+    lineHeight: 17,
+  },
+
+  // Captions & Metadata (minimum 10px for mobile accessibility)
+  caption: {
+    fontSize: 11,
+    fontWeight: '500',
+    lineHeight: 15,
+  },
+  captionBold: {
+    fontSize: 11,
+    fontWeight: '700',
+    lineHeight: 15,
+  },
+  overline: {
+    fontSize: 10,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  badge: {
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 0.2,
+  },
+  subBadge: {
+    fontSize: 10,
+    fontWeight: '600',
+  },
 };

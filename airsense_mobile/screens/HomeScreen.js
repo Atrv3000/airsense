@@ -11,11 +11,11 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { useFetch } from '../hooks/useFetch';
 import {
-  LoadingCard, ErrorCard, SectionHeader,
+  LoadingCard, ErrorCard, ErrorBanner, EmptyCard, SectionHeader,
   AQIBadge, MetricPill, StationCard,
   getAQIColor, getHealthAdvice
 } from '../components/SharedComponents';
-import { ENDPOINTS, THEME } from '../config';
+import { ENDPOINTS, THEME, TYPOGRAPHY, SPACING } from '../config';
 
 export default function HomeScreen({ navigation }) {
   const [refreshing, setRefreshing] = useState(false);
@@ -48,9 +48,20 @@ export default function HomeScreen({ navigation }) {
     setRefreshing(false);
   };
 
-  if (loading && !refreshing) return <LoadingCard message="Retrieving station feeds..." />;
-  if (error) return <ErrorCard message={error} onRetry={refetch} />;
-  if (!data) return null;
+  if (loading && !refreshing && !data) return <LoadingCard message="Retrieving live monitoring feeds across Greater Mumbai..." />;
+  if (error && !data) return <ErrorCard message={error} onRetry={refetch} />;
+  if (!data && !loading && !error) {
+    return (
+      <View style={styles.container}>
+        <EmptyCard
+          title="No Air Quality Readings"
+          message="No monitoring stations are currently reporting ambient AQI in Greater Mumbai."
+          actionLabel="Reconnect Telemetry"
+          onAction={refetch}
+        />
+      </View>
+    );
+  }
 
   const cityAQI = data.city_average_aqi;
   const hasValidCityAqi = cityAQI !== null && cityAQI !== undefined && !isNaN(cityAQI);
@@ -109,6 +120,11 @@ export default function HomeScreen({ navigation }) {
           </View>
         </View>
 
+        {/* Failed background refresh notification without wiping visible UI */}
+        {error && data && (
+          <ErrorBanner message={error} onRetry={refetch} />
+        )}
+
         {/* Primary City Index Card */}
         <View style={styles.heroCard}>
           <View style={styles.heroLeft}>
@@ -125,7 +141,7 @@ export default function HomeScreen({ navigation }) {
               <View style={styles.heroAqiMeta}>
                 <Text style={styles.heroAqiUnit}>AQI</Text>
                 <View style={[styles.categoryBadge, { backgroundColor: cityColor }]}>
-                  <Text style={styles.categoryBadgeText}>{cityCat || 'No data'}</Text>
+                  <Text style={styles.categoryBadgeText}>{cityCat || 'Assessing'}</Text>
                 </View>
               </View>
             </View>
@@ -231,16 +247,25 @@ export default function HomeScreen({ navigation }) {
           title="Monitoring Stations"
           subtitle="Select a station to inspect time-series logs and sub-indices"
         />
-        {stations.map((st, i) => (
-          <StationCard
-            key={st.station_id_code || i}
-            name={st.station_name}
-            aqi={st.overall_aqi}
-            category={st.aqi_category}
-            zone={st.station_id_code}
-            onPress={() => navigation.navigate('StationDetail', { station: st })}
+        {stations.length > 0 ? (
+          stations.map((st, i) => (
+            <StationCard
+              key={st.station_id_code || i}
+              name={st.station_name}
+              aqi={st.overall_aqi}
+              category={st.aqi_category}
+              zone={st.station_id_code}
+              onPress={() => navigation.navigate('StationDetail', { station: st })}
+            />
+          ))
+        ) : (
+          <EmptyCard
+            title="No Active Stations"
+            message="No monitoring sensors are currently transmitting observations for this region."
+            actionLabel="Refresh Station Feeds"
+            onAction={refetch}
           />
-        ))}
+        )}
 
         <View style={{ height: 32 }} />
       </ScrollView>
@@ -263,16 +288,11 @@ const styles = StyleSheet.create({
   },
   headerSubtitle: {
     color: THEME.textMuted,
-    fontSize: 12,
-    fontWeight: '500',
-    letterSpacing: 0.3,
-    textTransform: 'uppercase',
+    ...TYPOGRAPHY.pageSubtitle,
   },
   headerTitle: {
     color: THEME.textPrimary,
-    fontSize: 22,
-    fontWeight: '800',
-    letterSpacing: -0.4,
+    ...TYPOGRAPHY.pageTitle,
     marginTop: 2,
   },
   liveIndicator: {
@@ -282,20 +302,19 @@ const styles = StyleSheet.create({
     backgroundColor: THEME.surface,
     paddingHorizontal: 10,
     paddingVertical: 5,
-    borderRadius: 20,
+    borderRadius: THEME.radiusFull,
     borderWidth: 1,
     borderColor: THEME.border,
   },
   liveDot: {
     width: 6,
     height: 6,
-    borderRadius: 3,
+    borderRadius: THEME.radiusFull,
     backgroundColor: THEME.success,
   },
   liveText: {
     color: THEME.textSecondary,
-    fontSize: 11,
-    fontWeight: '600',
+    ...TYPOGRAPHY.captionBold,
   },
   heroCard: {
     marginHorizontal: 16,
@@ -317,15 +336,11 @@ const styles = StyleSheet.create({
   },
   heroTag: {
     color: THEME.textMuted,
-    fontSize: 12,
-    fontWeight: '600',
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
+    ...TYPOGRAPHY.overline,
   },
   heroObservedTime: {
     color: THEME.primaryLight,
-    fontSize: 11,
-    fontWeight: '600',
+    ...TYPOGRAPHY.captionBold,
   },
   heroAqiRow: {
     flexDirection: 'row',
@@ -335,31 +350,27 @@ const styles = StyleSheet.create({
   },
   heroAqiNumber: {
     color: THEME.textPrimary,
-    fontSize: 54,
-    fontWeight: '800',
-    letterSpacing: -2,
+    ...TYPOGRAPHY.heroAqi,
   },
   heroAqiMeta: {
     gap: 4,
   },
   heroAqiUnit: {
     color: THEME.textMuted,
-    fontSize: 12,
-    fontWeight: '600',
+    ...TYPOGRAPHY.captionBold,
   },
   categoryBadge: {
     paddingHorizontal: 10,
-    paddingVertical: 3,
-    borderRadius: 6,
+    paddingVertical: 4,
+    borderRadius: THEME.radiusXs,
   },
   categoryBadgeText: {
     color: '#ffffff',
-    fontSize: 11,
-    fontWeight: '700',
+    ...TYPOGRAPHY.badge,
   },
   heroStationCount: {
     color: THEME.textSecondary,
-    fontSize: 12,
+    ...TYPOGRAPHY.caption,
   },
   advisoryCard: {
     backgroundColor: THEME.surface,
@@ -378,13 +389,11 @@ const styles = StyleSheet.create({
   },
   advisoryTitle: {
     color: THEME.textPrimary,
-    fontSize: 13,
-    fontWeight: '700',
+    ...TYPOGRAPHY.cardTitle,
   },
   advisoryText: {
     color: THEME.textSecondary,
-    fontSize: 13,
-    lineHeight: 18,
+    ...TYPOGRAPHY.body,
   },
   extremesRow: {
     flexDirection: 'row',
@@ -401,15 +410,11 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   extremeLabel: {
-    fontSize: 11,
-    fontWeight: '700',
-    textTransform: 'uppercase',
-    letterSpacing: 0.4,
+    ...TYPOGRAPHY.overline,
   },
   extremeStationName: {
     color: THEME.textPrimary,
-    fontWeight: '600',
-    fontSize: 13,
+    ...TYPOGRAPHY.cardTitle,
   },
   extremeScoreRow: {
     flexDirection: 'row',
@@ -418,12 +423,11 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
   extremeScore: {
-    fontSize: 22,
-    fontWeight: '800',
+    ...TYPOGRAPHY.statAqi,
   },
   extremeCat: {
     color: THEME.textMuted,
-    fontSize: 11,
+    ...TYPOGRAPHY.caption,
   },
   metricsGrid: {
     flexDirection: 'row',
@@ -454,12 +458,10 @@ const styles = StyleSheet.create({
   },
   weatherLabel: {
     color: THEME.textMuted,
-    fontSize: 11,
-    fontWeight: '500',
+    ...TYPOGRAPHY.overline,
   },
   weatherValue: {
     color: THEME.textPrimary,
-    fontSize: 14,
-    fontWeight: '700',
+    ...TYPOGRAPHY.cardTitle,
   },
 });

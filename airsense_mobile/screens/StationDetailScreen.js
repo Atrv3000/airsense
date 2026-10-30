@@ -10,16 +10,18 @@ import {
   TouchableOpacity, StatusBar, RefreshControl, Dimensions
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFetch } from '../hooks/useFetch';
 import {
-  LoadingCard, ErrorCard, SectionHeader,
+  LoadingCard, ErrorCard, ErrorBanner, EmptyCard, SectionHeader,
   AQIBadge, MetricPill, getAQIColor, getHealthAdvice
 } from '../components/SharedComponents';
-import { ENDPOINTS, THEME } from '../config';
+import { ENDPOINTS, THEME, TYPOGRAPHY, SPACING } from '../config';
 
 const { width: SCREEN_W } = Dimensions.get('window');
 
 export default function StationDetailScreen({ route, navigation }) {
+  const insets = useSafeAreaInsets();
   const { station } = route.params || {};
   const stationId = station?.station_id_code || station?.station_id || station?.id || 'OPENAQ_6927';
   const stationName = station?.station_name || station?.name || stationId;
@@ -42,7 +44,7 @@ export default function StationDetailScreen({ route, navigation }) {
   const aqiVal = (current.overall_aqi !== null && current.overall_aqi !== undefined && !isNaN(current.overall_aqi))
     ? current.overall_aqi
     : null;
-  const aqiCat = current.aqi_category || current.category || (aqiVal !== null ? 'Assessing' : 'No data');
+  const aqiCat = current.aqi_category || current.category || (aqiVal !== null ? 'Assessing' : 'Pending Observation');
   const aqiColor = getAQIColor(aqiCat);
   const healthMsg = getHealthAdvice(aqiCat);
 
@@ -72,7 +74,7 @@ export default function StationDetailScreen({ route, navigation }) {
         }
       >
         {/* Top Navigation Bar */}
-        <View style={styles.navBar}>
+        <View style={[styles.navBar, { paddingTop: Math.max(16, insets.top) }]}>
           <TouchableOpacity
             style={styles.backBtn}
             onPress={() => navigation.goBack()}
@@ -95,12 +97,16 @@ export default function StationDetailScreen({ route, navigation }) {
           </View>
         </View>
 
-        {loading && !refreshing ? (
-          <LoadingCard message="Retrieving station records..." />
-        ) : error ? (
+        {loading && !refreshing && !data ? (
+          <LoadingCard message="Retrieving telemetry records for this station..." />
+        ) : error && !data ? (
           <ErrorCard message={error} onRetry={refetch} />
         ) : (
           <>
+            {/* Failed background refresh banner */}
+            {error && data && (
+              <ErrorBanner message={error} onRetry={refetch} />
+            )}
             {/* Live AQI Score Card */}
             <View style={styles.heroCard}>
               <AQIBadge aqi={aqiVal} category={aqiCat} size="lg" />
@@ -178,7 +184,7 @@ export default function StationDetailScreen({ route, navigation }) {
               subtitle="Trained ML model projection with expected error bounds"
             />
             {forecastFetch.loading ? (
-              <LoadingCard message="Loading forecast projections..." />
+              <LoadingCard message="Loading 24-hour predictive horizon..." />
             ) : forecasts.length > 0 ? (
               <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.forecastStrip}>
                 {forecasts.map((fc, i) => {
@@ -202,9 +208,13 @@ export default function StationDetailScreen({ route, navigation }) {
                 })}
               </ScrollView>
             ) : (
-              <View style={styles.emptyCard}>
-                <Text style={styles.emptyText}>No precomputed forecast available for this station.</Text>
-              </View>
+              <EmptyCard
+                title="Forecast Model Output Pending"
+                message="Precomputed machine learning forecasts have not yet synced for this monitoring location."
+                icon="trending-up-outline"
+                actionLabel="Fetch Forecast"
+                onAction={forecastFetch.refetch}
+              />
             )}
 
             {/* Recent Observation History */}
@@ -241,9 +251,13 @@ export default function StationDetailScreen({ route, navigation }) {
                 })}
               </View>
             ) : (
-              <View style={styles.emptyCard}>
-                <Text style={styles.emptyText}>No historical records available for this station.</Text>
-              </View>
+              <EmptyCard
+                title="No Recent Station History"
+                message="Continuous hourly sensor measurements have not been reported for this station within this time window."
+                icon="time-outline"
+                actionLabel="Reload Sensor History"
+                onAction={historyFetch.refetch}
+              />
             )}
           </>
         )}
@@ -271,13 +285,14 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    paddingVertical: 6,
+    paddingVertical: 8,
     paddingRight: 12,
+    minHeight: 40,
+    justifyContent: 'center',
   },
   backBtnText: {
     color: THEME.textPrimary,
-    fontSize: 13,
-    fontWeight: '600',
+    ...TYPOGRAPHY.bodyMedium,
   },
   stationBadgeWrap: {
     backgroundColor: THEME.surfaceElevated,
@@ -289,9 +304,7 @@ const styles = StyleSheet.create({
   },
   stationCode: {
     color: THEME.textMuted,
-    fontSize: 11,
-    fontWeight: '700',
-    letterSpacing: 0.5,
+    ...TYPOGRAPHY.badge,
   },
   titleSection: {
     paddingHorizontal: 16,
@@ -303,6 +316,7 @@ const styles = StyleSheet.create({
     fontSize: 20,
     fontWeight: '800',
     letterSpacing: -0.3,
+    lineHeight: 26,
   },
   sourcePillRow: {
     flexDirection: 'row',
@@ -313,11 +327,11 @@ const styles = StyleSheet.create({
   sourceDot: {
     width: 6,
     height: 6,
-    borderRadius: 3,
+    borderRadius: THEME.radiusFull,
   },
   stationSubtitle: {
     color: THEME.textMuted,
-    fontSize: 12,
+    ...TYPOGRAPHY.bodySecondary,
   },
   heroCard: {
     marginHorizontal: 16,
@@ -349,14 +363,11 @@ const styles = StyleSheet.create({
   },
   heroMetaLabel: {
     color: THEME.textMuted,
-    fontSize: 10,
-    fontWeight: '600',
-    textTransform: 'uppercase',
+    ...TYPOGRAPHY.overline,
   },
   heroMetaVal: {
     color: THEME.textPrimary,
-    fontSize: 13,
-    fontWeight: '700',
+    ...TYPOGRAPHY.cardTitle,
   },
   advisoryCard: {
     backgroundColor: THEME.surface,
@@ -377,13 +388,11 @@ const styles = StyleSheet.create({
   },
   advisoryTitle: {
     color: THEME.textPrimary,
-    fontSize: 13,
-    fontWeight: '700',
+    ...TYPOGRAPHY.cardTitle,
   },
   advisoryText: {
     color: THEME.textSecondary,
-    fontSize: 12,
-    lineHeight: 17,
+    ...TYPOGRAPHY.body,
   },
   metricsGrid: {
     flexDirection: 'row',
@@ -414,14 +423,11 @@ const styles = StyleSheet.create({
   },
   weatherLabel: {
     color: THEME.textMuted,
-    fontSize: 10,
-    fontWeight: '600',
-    textTransform: 'uppercase',
+    ...TYPOGRAPHY.overline,
   },
   weatherValue: {
     color: THEME.textPrimary,
-    fontSize: 13,
-    fontWeight: '700',
+    ...TYPOGRAPHY.cardTitle,
   },
   forecastStrip: {
     paddingHorizontal: 16,
@@ -440,21 +446,19 @@ const styles = StyleSheet.create({
   },
   fcHour: {
     color: THEME.textMuted,
-    fontSize: 10,
-    fontWeight: '600',
+    ...TYPOGRAPHY.overline,
   },
   fcAqi: {
-    fontSize: 17,
+    fontSize: 16,
     fontWeight: '800',
   },
   fcCat: {
     color: THEME.textSecondary,
-    fontSize: 9,
-    fontWeight: '600',
+    ...TYPOGRAPHY.subBadge,
   },
   fcRange: {
     color: THEME.textMuted,
-    fontSize: 8,
+    ...TYPOGRAPHY.subBadge,
   },
   historyCard: {
     backgroundColor: THEME.surface,
@@ -477,21 +481,20 @@ const styles = StyleSheet.create({
   },
   historyTime: {
     color: THEME.textPrimary,
-    fontSize: 12,
+    ...TYPOGRAPHY.bodySecondary,
     fontWeight: '600',
   },
   historyPollutant: {
     color: THEME.textMuted,
-    fontSize: 10,
+    ...TYPOGRAPHY.caption,
     marginTop: 2,
   },
   historyAqi: {
-    fontSize: 15,
-    fontWeight: '800',
+    ...TYPOGRAPHY.cardAqi,
   },
   historyCat: {
     color: THEME.textMuted,
-    fontSize: 10,
+    ...TYPOGRAPHY.subBadge,
   },
   emptyCard: {
     backgroundColor: THEME.surface,
@@ -504,6 +507,6 @@ const styles = StyleSheet.create({
   },
   emptyText: {
     color: THEME.textMuted,
-    fontSize: 12,
+    ...TYPOGRAPHY.bodySecondary,
   },
 });

@@ -19,7 +19,17 @@ export function useFetch(url, options = {}) {
     try {
       const res = await fetch(url, { ...options, signal: controller.signal });
       clearTimeout(timeoutId);
-      if (!res.ok) throw new Error(`Server error: ${res.status}`);
+      if (!res.ok) {
+        if (res.status === 404) {
+          throw new Error('Data endpoint not found (404). Check API configuration.');
+        } else if (res.status === 429) {
+          throw new Error('Rate limit exceeded (429). Please wait a moment.');
+        } else if (res.status >= 500) {
+          throw new Error(`Server temporarily unavailable (${res.status}). Service restarting.`);
+        } else {
+          throw new Error(`Request returned status ${res.status}`);
+        }
+      }
       const json = await res.json();
       setData(json);
     } catch (e) {

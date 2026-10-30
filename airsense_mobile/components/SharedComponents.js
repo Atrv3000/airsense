@@ -9,12 +9,12 @@ import {
   TouchableOpacity
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { THEME, CPCB_COLORS } from '../config';
+import { THEME, CPCB_COLORS, TYPOGRAPHY, SPACING } from '../config';
 
 // --- Loading State ---
-export function LoadingCard({ message = 'Loading live data...' }) {
+export function LoadingCard({ message = 'Connecting to telemetry feed...' }) {
   return (
-    <View style={styles.centered}>
+    <View style={styles.centered} accessibilityRole="progressbar" accessibilityLabel={message}>
       <ActivityIndicator size="small" color={THEME.primaryLight} />
       <Text style={styles.loadingText}>{message}</Text>
     </View>
@@ -24,17 +24,72 @@ export function LoadingCard({ message = 'Loading live data...' }) {
 // --- Error State ---
 export function ErrorCard({ message, onRetry }) {
   return (
-    <View style={styles.errorCard}>
+    <View style={styles.errorCard} accessibilityRole="alert">
       <Ionicons name="alert-circle-outline" size={24} color={THEME.error} />
       <View style={{ flex: 1, gap: 4 }}>
-        <Text style={styles.errorTitle}>Unable to connect</Text>
+        <Text style={styles.errorTitle}>Telemetry Offline</Text>
         <Text style={styles.errorMsg}>{message}</Text>
         {onRetry && (
-          <TouchableOpacity style={styles.retryBtn} onPress={onRetry} activeOpacity={0.7}>
-            <Text style={styles.retryText}>Retry</Text>
+          <TouchableOpacity
+            style={styles.retryBtn}
+            onPress={onRetry}
+            activeOpacity={0.7}
+            accessibilityRole="button"
+            accessibilityLabel="Retry telemetry connection"
+          >
+            <Text style={styles.retryText}>Retry Connection</Text>
           </TouchableOpacity>
         )}
       </View>
+    </View>
+  );
+}
+
+// --- Non-destructive Error Banner (Preserves displayed data on failed refresh) ---
+export function ErrorBanner({ message = 'Live sensor feed interrupted — tap to reconnect', onRetry }) {
+  return (
+    <View style={styles.errorBanner} accessibilityRole="alert">
+      <Ionicons name="warning-outline" size={16} color={THEME.warning} />
+      <Text style={styles.errorBannerText} numberOfLines={2}>{message}</Text>
+      {onRetry && (
+        <TouchableOpacity
+          style={styles.errorBannerRetry}
+          onPress={onRetry}
+          activeOpacity={0.7}
+          accessibilityRole="button"
+          accessibilityLabel="Reconnect live sensor feed"
+        >
+          <Text style={styles.errorBannerRetryText}>Reconnect</Text>
+        </TouchableOpacity>
+      )}
+    </View>
+  );
+}
+
+// --- Empty State Card ---
+export function EmptyCard({
+  title = 'No Records Available',
+  message = 'Sensor feeds have not reported data for this time period.',
+  icon = 'file-tray-outline',
+  actionLabel,
+  onAction,
+}) {
+  return (
+    <View style={styles.emptyCard} accessibilityRole="summary">
+      <Ionicons name={icon} size={28} color={THEME.textMuted} />
+      <Text style={styles.emptyTitle}>{title}</Text>
+      <Text style={styles.emptyDesc}>{message}</Text>
+      {onAction && actionLabel && (
+        <TouchableOpacity
+          style={styles.emptyActionBtn}
+          onPress={onAction}
+          activeOpacity={0.7}
+          accessibilityRole="button"
+          accessibilityLabel={actionLabel}
+        >
+          <Text style={styles.emptyActionText}>{actionLabel}</Text>
+        </TouchableOpacity>
+      )}
     </View>
   );
 }
@@ -58,17 +113,21 @@ export function AQIBadge({ aqi, category, size = 'md' }) {
   const isLarge = size === 'lg';
 
   return (
-    <View style={[
-      styles.aqiBadge,
-      { borderColor: color + '55', backgroundColor: color + '15' },
-      isLarge && styles.aqiBadgeLarge
-    ]}>
+    <View
+      style={[
+        styles.aqiBadge,
+        { borderColor: color + '55', backgroundColor: color + '15' },
+        isLarge && styles.aqiBadgeLarge
+      ]}
+      accessibilityRole="text"
+      accessibilityLabel={`Air Quality Index: ${aqi !== null && aqi !== undefined && !isNaN(aqi) ? Math.round(aqi) : 'unavailable'}, category ${category || 'unclassified'}`}
+    >
       <Text style={[styles.aqiNum, { color: '#ffffff', fontSize: isLarge ? 48 : 28 }]}>
         {aqi !== null && aqi !== undefined && !isNaN(aqi) ? Math.round(aqi) : '--'}
       </Text>
       <View style={[styles.statusPill, { backgroundColor: color }]}>
         <Text style={styles.statusPillText}>
-          {category || 'Unknown'}
+          {category || 'Unclassified'}
         </Text>
       </View>
     </View>
@@ -94,12 +153,15 @@ export function MetricPill({ label, value, unit, statusColor }) {
 // --- Clean Station Row Card ---
 export function StationCard({ name, aqi, category, zone, onPress }) {
   const color = getAQIColor(category);
+  const aqiDisplay = aqi !== null && aqi !== undefined && !isNaN(aqi) ? Math.round(aqi) : 'unavailable';
 
   return (
     <TouchableOpacity
       style={styles.stationCard}
       onPress={onPress}
       activeOpacity={0.7}
+      accessibilityRole="button"
+      accessibilityLabel={`Station ${name}, ${zone}. AQI ${aqiDisplay}, category ${category || 'unclassified'}. Tap to view telemetry.`}
     >
       <View style={[styles.stationIndicator, { backgroundColor: color }]} />
       <View style={{ flex: 1 }}>
@@ -110,7 +172,7 @@ export function StationCard({ name, aqi, category, zone, onPress }) {
         <Text style={[styles.stationAQI, { color }]}>
           {aqi !== null && aqi !== undefined && !isNaN(aqi) ? Math.round(aqi) : '--'}
         </Text>
-        <Text style={styles.stationCat}>{category || '--'}</Text>
+        <Text style={styles.stationCat}>{category || 'Unclassified'}</Text>
       </View>
       <Ionicons name="chevron-forward" size={16} color={THEME.textMuted} />
     </TouchableOpacity>
@@ -193,7 +255,9 @@ const styles = StyleSheet.create({
     marginTop: 8,
     backgroundColor: THEME.surfaceElevated,
     paddingHorizontal: 14,
-    paddingVertical: 6,
+    paddingVertical: 8,
+    minHeight: 36,
+    justifyContent: 'center',
     borderRadius: THEME.radiusSm,
     borderWidth: 1,
     borderColor: THEME.borderLight,
@@ -203,23 +267,93 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     fontSize: 12,
   },
+  errorBanner: {
+    marginHorizontal: 16,
+    marginBottom: 10,
+    backgroundColor: THEME.surfaceElevated,
+    borderRadius: THEME.radiusSm,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderWidth: 1,
+    borderColor: THEME.warning + '55',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  errorBannerText: {
+    color: THEME.textSecondary,
+    ...TYPOGRAPHY.caption,
+    flex: 1,
+  },
+  errorBannerRetry: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    minHeight: 32,
+    justifyContent: 'center',
+    borderRadius: THEME.radiusXs,
+    backgroundColor: THEME.surface,
+    borderWidth: 1,
+    borderColor: THEME.border,
+  },
+  errorBannerRetryText: {
+    color: THEME.primaryLight,
+    ...TYPOGRAPHY.subBadge,
+  },
+  emptyCard: {
+    backgroundColor: THEME.surface,
+    marginHorizontal: 16,
+    marginBottom: 10,
+    borderRadius: THEME.radiusMd,
+    padding: 24,
+    borderWidth: 1,
+    borderColor: THEME.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+  },
+  emptyTitle: {
+    color: THEME.textPrimary,
+    ...TYPOGRAPHY.cardTitle,
+    marginTop: 6,
+  },
+  emptyDesc: {
+    color: THEME.textMuted,
+    ...TYPOGRAPHY.bodySecondary,
+    textAlign: 'center',
+    maxWidth: 280,
+  },
+  emptyActionBtn: {
+    marginTop: 10,
+    backgroundColor: THEME.surfaceElevated,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    minHeight: 40,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderRadius: THEME.radiusSm,
+    borderWidth: 1,
+    borderColor: THEME.border,
+  },
+  emptyActionText: {
+    color: THEME.primaryLight,
+    ...TYPOGRAPHY.bodySecondary,
+    fontWeight: '600',
+  },
   sectionHeader: {
     paddingHorizontal: 16,
-    paddingTop: 24,
-    paddingBottom: 10,
+    paddingTop: 22,
+    paddingBottom: 8,
     flexDirection: 'row',
-    alignItems: 'flex-end',
+    alignItems: 'center',
     justifyContent: 'space-between',
   },
   sectionTitle: {
     color: THEME.textPrimary,
-    fontSize: 15,
-    fontWeight: '700',
-    letterSpacing: -0.2,
+    ...TYPOGRAPHY.sectionTitle,
   },
   sectionSubtitle: {
     color: THEME.textMuted,
-    fontSize: 12,
+    ...TYPOGRAPHY.sectionSubtitle,
     marginTop: 2,
   },
   aqiBadge: {
@@ -241,14 +375,12 @@ const styles = StyleSheet.create({
   statusPill: {
     marginTop: 8,
     paddingHorizontal: 10,
-    paddingVertical: 3,
-    borderRadius: 6,
+    paddingVertical: 4,
+    borderRadius: THEME.radiusXs,
   },
   statusPillText: {
     color: '#ffffff',
-    fontSize: 11,
-    fontWeight: '700',
-    letterSpacing: 0.2,
+    ...TYPOGRAPHY.badge,
   },
   metricCard: {
     flex: 1,
@@ -266,15 +398,12 @@ const styles = StyleSheet.create({
   },
   metricLabel: {
     color: THEME.textMuted,
-    fontSize: 11,
-    fontWeight: '600',
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
+    ...TYPOGRAPHY.overline,
   },
   metricDot: {
     width: 6,
     height: 6,
-    borderRadius: 3,
+    borderRadius: THEME.radiusFull,
   },
   metricValue: {
     color: THEME.textPrimary,
@@ -284,7 +413,7 @@ const styles = StyleSheet.create({
   },
   metricUnit: {
     color: THEME.textMuted,
-    fontSize: 11,
+    ...TYPOGRAPHY.caption,
     marginTop: 2,
   },
   stationCard: {
@@ -302,16 +431,15 @@ const styles = StyleSheet.create({
   stationIndicator: {
     width: 4,
     height: 32,
-    borderRadius: 2,
+    borderRadius: THEME.radiusXs,
   },
   stationName: {
     color: THEME.textPrimary,
-    fontWeight: '600',
-    fontSize: 14,
+    ...TYPOGRAPHY.cardTitle,
   },
   stationZone: {
     color: THEME.textMuted,
-    fontSize: 11,
+    ...TYPOGRAPHY.caption,
     marginTop: 2,
   },
   stationValueWrapper: {
@@ -319,12 +447,11 @@ const styles = StyleSheet.create({
     paddingRight: 4,
   },
   stationAQI: {
-    fontSize: 17,
-    fontWeight: '700',
+    ...TYPOGRAPHY.cardAqi,
   },
   stationCat: {
-    fontSize: 10,
     color: THEME.textMuted,
+    ...TYPOGRAPHY.subBadge,
     marginTop: 1,
   },
 });

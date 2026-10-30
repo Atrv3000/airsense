@@ -12,6 +12,7 @@ import AlertsScreen from './screens/AlertsScreen';
 import StationDetailScreen from './screens/StationDetailScreen';
 import { THEME } from './config';
 import { registerForPushNotificationsAsync } from './services/notificationService';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 const Tab = createBottomTabNavigator();
 const Stack = createNativeStackNavigator();
@@ -85,8 +86,10 @@ export default function App() {
   }, []);
 
   return (
-    <NavigationContainer>
-      <MainTabs />
-    </NavigationContainer>
+    <SafeAreaProvider>
+      <NavigationContainer>
+        <MainTabs />
+      </NavigationContainer>
+    </SafeAreaProvider>
   );
 }

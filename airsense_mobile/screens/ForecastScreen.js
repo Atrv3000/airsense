@@ -10,12 +10,14 @@ import {
 } from 'react-native';
 import { LineChart } from 'react-native-chart-kit';
 import { Ionicons } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFetch } from '../hooks/useFetch';
-import { LoadingCard, ErrorCard, SectionHeader, getAQIColor } from '../components/SharedComponents';
-import { ENDPOINTS, THEME, CPCB_COLORS } from '../config';
+import { LoadingCard, ErrorCard, ErrorBanner, EmptyCard, SectionHeader, getAQIColor } from '../components/SharedComponents';
+import { ENDPOINTS, THEME, CPCB_COLORS, TYPOGRAPHY, SPACING } from '../config';
 
 const { width: SCREEN_W } = Dimensions.get('window');
-const CHART_WIDTH = SCREEN_W - 32;
+// Card has marginHorizontal: 16 (32px total) and padding: 14 (28px total). Inner width is SCREEN_W - 60.
+const CHART_WIDTH = SCREEN_W - 60;
 
 const CHART_CONFIG = {
   backgroundGradientFrom: THEME.surface,
@@ -29,6 +31,7 @@ const CHART_CONFIG = {
 };
 
 export default function ForecastScreen() {
+  const insets = useSafeAreaInsets();
   const stationsFetch = useFetch(ENDPOINTS.stations);
   const stationList = Array.isArray(stationsFetch.data)
     ? stationsFetch.data
@@ -143,7 +146,7 @@ export default function ForecastScreen() {
         }
       >
         {/* Header Title with Real Date & Minute Clock */}
-        <View style={styles.headerBar}>
+        <View style={[styles.headerBar, { paddingTop: Math.max(16, insets.top) }]}>
           <View>
             <Text style={styles.headerSubtitle}>{formattedDate}</Text>
             <Text style={styles.headerTitle}>Forecast & Analytics</Text>
@@ -153,6 +156,11 @@ export default function ForecastScreen() {
             <Text style={styles.clockText}>{formattedClock}</Text>
           </View>
         </View>
+
+        {/* Failed background refresh banner */}
+        {(pred.error || hist.error || stationsFetch.error) && (predChartData || histChartData) && (
+          <ErrorBanner message={pred.error || hist.error || stationsFetch.error} onRetry={onRefresh} />
+        )}
 
         {/* Dynamic Station Filter Tabs */}
         {stationList.length > 0 && (
@@ -170,8 +178,10 @@ export default function ForecastScreen() {
                   style={[styles.chip, active && styles.chipActive]}
                   onPress={() => setSelectedStation(sId)}
                   activeOpacity={0.7}
+                  accessibilityRole="tab"
+                  accessibilityLabel={`Filter analytics to station ${s.name || sId}`}
                 >
-                  <Text style={[styles.chipText, active && styles.chipTextActive]}>
+                  <Text style={[styles.chipText, active && styles.chipTextActive]} numberOfLines={1}>
                     {s.name || sId}
                   </Text>
                 </TouchableOpacity>
@@ -186,14 +196,14 @@ export default function ForecastScreen() {
           subtitle={`Forecast horizon via ${pred.data?.model_used || 'Precomputed Model'}`}
         />
         {pred.loading ? (
-          <View style={styles.chartPlaceholder}><LoadingCard message="Loading forecast horizon..." /></View>
-        ) : pred.error ? (
+          <View style={styles.chartPlaceholder}><LoadingCard message="Computing 24-hour forecast horizon..." /></View>
+        ) : pred.error && !predChartData ? (
           <ErrorCard message={pred.error} onRetry={pred.refetch} />
         ) : predChartData ? (
           <View style={styles.card}>
             <LineChart
               data={predChartData}
-              width={CHART_WIDTH - 24}
+              width={CHART_WIDTH}
               height={190}
               chartConfig={{
                 ...CHART_CONFIG,
@@ -234,7 +244,13 @@ export default function ForecastScreen() {
             </ScrollView>
           </View>
         ) : (
-          <Text style={styles.noData}>No forecast records found for this station.</Text>
+          <EmptyCard
+            title="Forecast Model Output Pending"
+            message="Machine learning models have not produced multi-horizon predictions for this station coordinate yet."
+            icon="trending-up-outline"
+            actionLabel="Recalculate Predictions"
+            onAction={pred.refetch}
+          />
         )}
 
         {/* Historical 24-Hour Observation Section */}
@@ -243,14 +259,14 @@ export default function ForecastScreen() {
           subtitle={`Sensor measurements for ${stationList.find(s => (s.station_id || s.id) === currentStationId)?.name || currentStationId}`}
         />
         {hist.loading ? (
-          <View style={styles.chartPlaceholder}><LoadingCard message="Retrieving station history..." /></View>
-        ) : hist.error ? (
+          <View style={styles.chartPlaceholder}><LoadingCard message="Retrieving station sensor history..." /></View>
+        ) : hist.error && !histChartData ? (
           <ErrorCard message={hist.error} onRetry={hist.refetch} />
         ) : histChartData ? (
           <View style={styles.card}>
             <LineChart
               data={histChartData}
-              width={CHART_WIDTH - 24}
+              width={CHART_WIDTH}
               height={180}
               chartConfig={CHART_CONFIG}
               bezier
@@ -272,7 +288,13 @@ export default function ForecastScreen() {
             </View>
           </View>
         ) : (
-          <Text style={styles.noData}>No historical data available.</Text>
+          <EmptyCard
+            title="No Recent Station History"
+            message="Ground sensor measurements have not been recorded for this station within the preceding 24-hour window."
+            icon="time-outline"
+            actionLabel="Reload Sensor History"
+            onAction={hist.refetch}
+          />
         )}
 
         {/* Model Transparency & Benchmark Evaluation */}
@@ -394,33 +416,27 @@ const styles = StyleSheet.create({
     backgroundColor: THEME.surface,
     paddingHorizontal: 10,
     paddingVertical: 5,
-    borderRadius: 20,
+    borderRadius: THEME.radiusFull,
     borderWidth: 1,
     borderColor: THEME.border,
   },
   clockDot: {
     width: 6,
     height: 6,
-    borderRadius: 3,
+    borderRadius: THEME.radiusFull,
     backgroundColor: THEME.primaryLight,
   },
   clockText: {
     color: THEME.textSecondary,
-    fontSize: 11,
-    fontWeight: '600',
+    ...TYPOGRAPHY.captionBold,
   },
   headerSubtitle: {
     color: THEME.textMuted,
-    fontSize: 12,
-    fontWeight: '500',
-    letterSpacing: 0.3,
-    textTransform: 'uppercase',
+    ...TYPOGRAPHY.pageSubtitle,
   },
   headerTitle: {
     color: THEME.textPrimary,
-    fontSize: 22,
-    fontWeight: '800',
-    letterSpacing: -0.4,
+    ...TYPOGRAPHY.pageTitle,
     marginTop: 2,
   },
   chipRow: {
@@ -430,7 +446,10 @@ const styles = StyleSheet.create({
   },
   chip: {
     paddingHorizontal: 14,
-    paddingVertical: 7,
+    paddingVertical: 8,
+    minHeight: 36,
+    justifyContent: 'center',
+    alignItems: 'center',
     borderRadius: THEME.radiusSm,
     backgroundColor: THEME.surface,
     borderWidth: 1,
@@ -442,7 +461,7 @@ const styles = StyleSheet.create({
   },
   chipText: {
     color: THEME.textSecondary,
-    fontSize: 12,
+    ...TYPOGRAPHY.bodySecondary,
     fontWeight: '600',
   },
   chipTextActive: {
@@ -477,11 +496,11 @@ const styles = StyleSheet.create({
   tDot: {
     width: 6,
     height: 6,
-    borderRadius: 3,
+    borderRadius: THEME.radiusFull,
   },
   tLabel: {
     color: THEME.textMuted,
-    fontSize: 10,
+    ...TYPOGRAPHY.subBadge,
   },
   forecastHourRow: {
     flexDirection: 'row',
@@ -497,21 +516,20 @@ const styles = StyleSheet.create({
   },
   fhHour: {
     color: THEME.textMuted,
-    fontSize: 10,
-    fontWeight: '600',
+    ...TYPOGRAPHY.overline,
   },
   fhAqi: {
     fontSize: 16,
     fontWeight: '800',
   },
   fhCat: {
-    fontSize: 9,
     color: THEME.textSecondary,
-    maxWidth: 60,
+    ...TYPOGRAPHY.subBadge,
+    maxWidth: 64,
   },
   fhBound: {
-    fontSize: 8,
     color: THEME.textMuted,
+    ...TYPOGRAPHY.subBadge,
   },
   champRow: {
     flexDirection: 'row',
@@ -521,13 +539,12 @@ const styles = StyleSheet.create({
   },
   champLabel: {
     color: THEME.textSecondary,
-    fontSize: 12,
+    ...TYPOGRAPHY.bodySecondary,
     fontWeight: '600',
   },
   champVal: {
     color: THEME.textPrimary,
-    fontWeight: '700',
-    fontSize: 13,
+    ...TYPOGRAPHY.bodyMedium,
   },
   metricsTable: {
     borderRadius: THEME.radiusSm,
@@ -552,24 +569,21 @@ const styles = StyleSheet.create({
   tcell: {
     flex: 1,
     color: THEME.textSecondary,
-    fontSize: 11,
+    ...TYPOGRAPHY.caption,
   },
   theader: {
     color: THEME.textMuted,
-    fontWeight: '700',
-    fontSize: 10,
-    textTransform: 'uppercase',
+    ...TYPOGRAPHY.overline,
   },
   metricsNote: {
     color: THEME.textMuted,
-    fontSize: 10,
+    ...TYPOGRAPHY.caption,
     marginTop: 10,
-    lineHeight: 14,
   },
   noData: {
     color: THEME.textMuted,
     textAlign: 'center',
     padding: 20,
-    fontSize: 12,
+    ...TYPOGRAPHY.bodySecondary,
   },
 });
