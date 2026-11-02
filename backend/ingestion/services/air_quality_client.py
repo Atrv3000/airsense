@@ -2,14 +2,37 @@ import os
 import time
 import logging
 import requests
-from datetime import datetime, timezone
+from requests.adapters import HTTPAdapter
+from urllib3.util import Retry
+from datetime import datetime, timezone, timedelta
 import dateutil.parser
-from dotenv import load_dotenv
+from django.conf import settings
+from django.core.cache import cache
 from .telemetry import IngestionTelemetry
-
-load_dotenv()
+from .cpcb_client import CPCBClient
+from ..constants import SOURCE_OPENAQ, SOURCE_OPEN_METEO, SOURCE_WAQI
 
 logger = logging.getLogger(__name__)
+
+# Shared requests session with backoff retry on 429/5xx errors
+_shared_session = None
+
+def get_http_session() -> requests.Session:
+    global _shared_session
+    if _shared_session is None:
+        s = requests.Session()
+        retries = Retry(
+            total=3,
+            backoff_factor=1,
+            status_forcelist=[429, 500, 502, 503, 504],
+            allowed_methods=["GET"]
+        )
+        adapter = HTTPAdapter(max_retries=retries)
+        s.mount("https://", adapter)
+        s.mount("http://", adapter)
+        _shared_session = s
+    return _shared_session
+
 
 class AirQualityClient:
     """
@@ -18,9 +41,21 @@ class AirQualityClient:
        monitoring stations in Mumbai.
     2. Fallback: Open-Meteo Air Quality API when ground sensor readings are unavailable.
     """
-    OPENAQ_API_BASE = os.getenv("OPENAQ_API_BASE", "https://api.openaq.org/v3")
-    OPENAQ_API_KEY = os.getenv("OPENAQ_API_KEY", "")
-    OPEN_METEO_AQ_URL = "https://air-quality-api.open-meteo.com/v1/air-quality"
+    @classmethod
+    def get_openaq_base(cls) -> str:
+        return getattr(settings, 'OPENAQ_API_BASE', os.getenv("OPENAQ_API_BASE", "https://api.openaq.org/v3"))
+
+    @classmethod
+    def get_openaq_key(cls) -> str:
+        return getattr(settings, 'OPENAQ_API_KEY', os.getenv("OPENAQ_API_KEY", ""))
+
+    @classmethod
+    def get_open_meteo_url(cls) -> str:
+        return getattr(settings, 'OPEN_METEO_AQ_URL', "https://air-quality-api.open-meteo.com/v1/air-quality")
+
+    @classmethod
+    def get_ground_max_age_hours(cls) -> int:
+        return getattr(settings, 'GROUND_MAX_AGE_HOURS', 12)
 
     @classmethod
     def _extract_location_id(cls, station_id_code: str) -> int | None:
@@ -29,7 +64,7 @@ class AirQualityClient:
         """
         if not station_id_code:
             return None
-        parts = station_id_code.split("_")
+        parts = str(station_id_code).split("_")
         num_str = parts[-1]
         try:
             return int(num_str)
@@ -37,40 +72,67 @@ class AirQualityClient:
             return None
 
     @classmethod
-    def fetch_openaq_ground_readings(cls, station_id_code: str = None, max_age_hours: int = 72) -> tuple[dict | None, str | None]:
+    def get_sensors_for_location(cls, location_id: int) -> list[dict]:
+        """
+        Fetches sensor catalog for location, cached for 24 hours (86,400s) to minimize API calls.
+        """
+        cache_key = f"openaq_sensors_loc_{location_id}"
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+        api_key = cls.get_openaq_key()
+        if not api_key:
+            return []
+
+        session = get_http_session()
+        headers = {"X-API-Key": api_key}
+        t0 = time.time()
+        try:
+            res = session.get(f"{cls.get_openaq_base()}/locations/{location_id}/sensors", headers=headers, timeout=10)
+            duration_ms = (time.time() - t0) * 1000
+            if res.status_code == 200:
+                results = res.json().get("results", [])
+                if results:
+                    cache.set(cache_key, results, timeout=86400)
+                    return results
+            else:
+                IngestionTelemetry.record_request("OPENAQ", success=False, duration_ms=duration_ms, error=f"Catalog HTTP {res.status_code}")
+        except Exception as e:
+            duration_ms = (time.time() - t0) * 1000
+            IngestionTelemetry.record_request("OPENAQ", success=False, duration_ms=duration_ms, error=str(e))
+            logger.warning(f"Error fetching sensor catalog for location {location_id}: {e}")
+        return []
+
+    @classmethod
+    def fetch_openaq_ground_readings(cls, station_id_code: str = None, max_age_hours: int = None) -> tuple[dict | None, str | None]:
         """
         Queries OpenAQ v3 API for ground sensor readings of a specific location.
+        Readings older than max_age_hours (default settings.GROUND_MAX_AGE_HOURS) are discarded.
         Returns:
             (pollutants_dict, timestamp_iso_local) or (None, None)
-        Units are read directly from sensor parameter definitions:
-          - co: if units == 'µg/m³' or 'ug/m3', converted to mg/m3 by dividing by 1000.
-          - ppb units: converted to µg/m³ using standard conversion factors if mass is unavailable.
         """
-        if not cls.OPENAQ_API_KEY:
+        api_key = cls.get_openaq_key()
+        if not api_key:
             return None, None
 
         location_id = cls._extract_location_id(station_id_code)
         if not location_id:
             return None, None
 
-        headers = {"X-API-Key": cls.OPENAQ_API_KEY}
+        if max_age_hours is None:
+            max_age_hours = cls.get_ground_max_age_hours()
+
+        session = get_http_session()
+        headers = {"X-API-Key": api_key}
         now_utc = datetime.now(timezone.utc)
         t0 = time.time()
 
         try:
-            # 1. Fetch sensor catalog for location to map sensor ID to pollutant parameter & units
-            loc_res = requests.get(f"{cls.OPENAQ_API_BASE}/locations/{location_id}", headers=headers, timeout=8)
-            if loc_res.status_code != 200:
-                IngestionTelemetry.record_request("OPENAQ", success=False, duration_ms=(time.time() - t0) * 1000, error=f"HTTP {loc_res.status_code}")
-                return None, None
-
-            data = loc_res.json().get("results", [])
-            if not data:
-                IngestionTelemetry.record_request("OPENAQ", success=False, duration_ms=(time.time() - t0) * 1000, error="Empty results")
-                return None, None
-
+            # 1. Fetch sensor catalog (using 24h cache)
+            sensors_list = cls.get_sensors_for_location(location_id)
             sensors_meta = {}
-            for s in data[0].get("sensors", []):
+            for s in sensors_list:
                 s_id = s.get("id")
                 param = s.get("parameter", {})
                 sensors_meta[s_id] = {
@@ -79,7 +141,7 @@ class AirQualityClient:
                 }
 
             # 2. Fetch latest readings for this location
-            latest_res = requests.get(f"{cls.OPENAQ_API_BASE}/locations/{location_id}/latest", headers=headers, timeout=8)
+            latest_res = session.get(f"{cls.get_openaq_base()}/locations/{location_id}/latest", headers=headers, timeout=8)
             duration_ms = (time.time() - t0) * 1000
             if latest_res.status_code != 200:
                 IngestionTelemetry.record_request("OPENAQ", success=False, duration_ms=duration_ms, error=f"HTTP {latest_res.status_code}")
@@ -125,6 +187,7 @@ class AirQualityClient:
 
                         age_hours = (now_utc - reading_dt).total_seconds() / 3600.0
                         if age_hours > max_age_hours:
+                            # Stale reading: do NOT accept as current
                             continue
 
                         if latest_reading_time is None or reading_dt > latest_reading_time:
@@ -161,7 +224,6 @@ class AirQualityClient:
             if p_units_clean in ["µg/m³", "ug/m3"]:
                 val_converted = round(val_converted / 1000.0, 3)
             elif p_units_clean == "ppb":
-                # 1 ppb CO ≈ 1.145 ug/m3 = 0.001145 mg/m3
                 val_converted = round((val_converted * 1.145) / 1000.0, 3)
             else:
                 val_converted = round(val_converted, 3)
@@ -185,33 +247,26 @@ class AirQualityClient:
         """
         Queries OpenAQ v3 historical sensor hours endpoint (/v3/sensors/{id}/hours)
         for ground-level criteria pollutants at a specific station.
+        Reuses cached sensor catalog for location.
         Returns:
             dict mapping local hour ISO string ("YYYY-MM-DDTHH:00") to pollutant dict
-            e.g. {"2026-10-05T12:00": {"pm25": 28.4, "pm10": 65.2, ...}}
         """
-        if not cls.OPENAQ_API_KEY:
+        api_key = cls.get_openaq_key()
+        if not api_key:
             return {}
 
         location_id = cls._extract_location_id(station_id_code)
         if not location_id:
             return {}
 
-        headers = {"X-API-Key": cls.OPENAQ_API_KEY}
+        session = get_http_session()
+        headers = {"X-API-Key": api_key}
         try:
-            # 1. Fetch sensor catalog for location
-            loc_res = requests.get(
-                f"{cls.OPENAQ_API_BASE}/locations/{location_id}/sensors",
-                headers=headers,
-                timeout=10
-            )
-            if loc_res.status_code != 200:
-                return {}
-
-            sensors_list = loc_res.json().get("results", [])
+            # 1. Fetch sensor catalog from 24h cache
+            sensors_list = cls.get_sensors_for_location(location_id)
             if not sensors_list:
                 return {}
 
-            # Map criteria pollutants to the most relevant/recent sensor
             target_params = {"pm25", "pm10", "no2", "so2", "co", "o3"}
             param_sensors: dict[str, dict] = {}
 
@@ -223,7 +278,6 @@ class AirQualityClient:
                     p_name = "o3"
 
                 if p_name in target_params:
-                    # Prefer sensors with more recent datetimeLast
                     s_last = (s.get("datetimeLast") or {}).get("utc", "")
                     if p_name not in param_sensors:
                         param_sensors[p_name] = s
@@ -245,7 +299,7 @@ class AirQualityClient:
                     continue
 
                 page = 1
-                max_pages = 5  # limit=1000 * 5 = 5000 hours (~208 days coverage)
+                max_pages = 3  # up to 3000 hours per sensor
                 while page <= max_pages:
                     params = {
                         "datetime_from": dt_from_str,
@@ -254,11 +308,11 @@ class AirQualityClient:
                         "page": page
                     }
                     try:
-                        h_res = requests.get(
-                            f"{cls.OPENAQ_API_BASE}/sensors/{sensor_id}/hours",
+                        h_res = session.get(
+                            f"{cls.get_openaq_base()}/sensors/{sensor_id}/hours",
                             headers=headers,
                             params=params,
-                            timeout=12
+                            timeout=10
                         )
                         if h_res.status_code != 200:
                             break
@@ -277,7 +331,6 @@ class AirQualityClient:
                             if not local_iso:
                                 continue
 
-                            # Normalize to YYYY-MM-DDTHH:00
                             hour_key = local_iso[:13] + ":00"
                             if hour_key not in history_by_hour:
                                 history_by_hour[hour_key] = {}
@@ -301,25 +354,25 @@ class AirQualityClient:
         latitude: float,
         longitude: float,
         past_days: int = 2,
-        forecast_days: int = 0,
         station_id_code: str = None
     ) -> dict:
         """
         Retrieves hourly air pollutant readings.
-        Sets forecast_days=0 by default so future hours are never stored as observations.
-        Attaches OpenAQ ground readings to its actual measured timestamp hour.
-        Returns a dict mapping timestamp -> {pollutants, 'source': 'OPENAQ_MEASURED' | 'OPEN_METEO_MODELLED'}.
+        Fetches:
+          1. Modelled baseline from Open-Meteo for past_days.
+          2. Historical hourly ground sensor readings from OpenAQ for past_days (stored as OPENAQ_MEASURED).
+          3. Latest ground reading from OpenAQ within GROUND_MAX_AGE_HOURS.
+          4. Real-time CPCB / WAQI station feed.
+        Returns a dict mapping timestamp -> {pollutants, 'source': 'CPCB_OFFICIAL' | 'OPENAQ_MEASURED' | 'WAQI_FEED' | 'OPEN_METEO_MODELLED'}.
         """
-        # forecast_days=1 retrieves current-day hours (pipeline strictly filters out future timestamps > now)
-        forecast_days = 1
-
+        session = get_http_session()
         params = {
             "latitude": round(latitude, 4),
             "longitude": round(longitude, 4),
             "hourly": "pm10,pm2_5,carbon_monoxide,nitrogen_dioxide,sulphur_dioxide,ozone",
             "timezone": "Asia/Kolkata",
             "past_days": past_days,
-            "forecast_days": forecast_days
+            "forecast_days": 1  # Retrieves current-day hours; pipeline drops timestamps > now
         }
 
         now_utc = datetime.now(timezone.utc)
@@ -328,7 +381,7 @@ class AirQualityClient:
         # 1. Fetch modelled time series baseline from Open-Meteo
         t_om = time.time()
         try:
-            response = requests.get(cls.OPEN_METEO_AQ_URL, params=params, timeout=12)
+            response = session.get(cls.get_open_meteo_url(), params=params, timeout=12)
             om_duration = (time.time() - t_om) * 1000
             if response.status_code == 200:
                 IngestionTelemetry.record_request("OPEN_METEO", success=True, duration_ms=om_duration)
@@ -340,7 +393,6 @@ class AirQualityClient:
                 no2_list = hourly.get("nitrogen_dioxide", [])
                 so2_list = hourly.get("sulphur_dioxide", [])
                 co_list = hourly.get("carbon_monoxide", [])
-                o3_list = hourly.get("ozone", [])
 
                 for i in range(len(times)):
                     t_str = times[i]
@@ -352,10 +404,9 @@ class AirQualityClient:
                         "pm10": pm10_list[i] if i < len(pm10_list) else None,
                         "no2": no2_list[i] if i < len(no2_list) else None,
                         "so2": so2_list[i] if i < len(so2_list) else None,
-                        # Open-Meteo CAMS tropospheric model lacks ground-level urban NOx titration,
-                        # causing uncalibrated ozone predictions (>300 ug/m3). Only ground sensors provide verified O3.
-                        "o3": None,
-                        "source": "OPEN_METEO_MODELLED"
+                        "co": co_mg,
+                        "o3": None,  # Open-Meteo ozone uncalibrated; ground sensors provide verified O3
+                        "source": SOURCE_OPEN_METEO
                     }
             else:
                 IngestionTelemetry.record_request("OPEN_METEO", success=False, duration_ms=om_duration, error=f"HTTP {response.status_code}")
@@ -364,43 +415,60 @@ class AirQualityClient:
             IngestionTelemetry.record_request("OPEN_METEO", success=False, duration_ms=om_duration, error=str(e))
             logger.error(f"Open-Meteo query error for ({latitude}, {longitude}): {e}")
 
-        # 2. Fetch real ground-level sensor data from OpenAQ and attach to the EXACT matching hour
+        # 2. Fetch historical OpenAQ ground sensor hours for past_days and merge
+        if station_id_code and cls.get_openaq_key():
+            start_history_dt = now_utc - timedelta(days=past_days)
+            ground_history = cls.fetch_openaq_historical_data(
+                station_id_code=station_id_code,
+                start_dt=start_history_dt,
+                end_dt=now_utc
+            )
+            for h_key, h_pollutants in ground_history.items():
+                if h_key not in results:
+                    results[h_key] = {}
+                for p, v in h_pollutants.items():
+                    if v is not None:
+                        results[h_key][p] = v
+                results[h_key]["source"] = SOURCE_OPENAQ
+
+        # 3. Fetch latest OpenAQ reading (filtered by GROUND_MAX_AGE_HOURS)
         ground_data, ground_time_str = cls.fetch_openaq_ground_readings(station_id_code=station_id_code)
         if ground_data and ground_time_str:
             try:
                 g_dt = dateutil.parser.isoparse(ground_time_str)
                 matching_hour_key = g_dt.strftime("%Y-%m-%dT%H:00")
-
                 if matching_hour_key not in results:
                     results[matching_hour_key] = {}
-
                 for param in ["pm25", "pm10", "no2", "so2", "co", "o3"]:
                     if ground_data.get(param) is not None:
                         results[matching_hour_key][param] = ground_data[param]
-
-                results[matching_hour_key]["source"] = "OPENAQ_MEASURED"
+                results[matching_hour_key]["source"] = SOURCE_OPENAQ
             except Exception as e:
                 logger.warning(f"Could not map ground reading time {ground_time_str}: {e}")
 
-        # 3. Fetch optional real-time WAQI telemetry if configured
+        # 4. Fetch real-time CPCB / WAQI station telemetry if configured
         try:
-            from .cpcb_client import CPCBClient
             cpcb_data, cpcb_time_str = CPCBClient.fetch_station_cpcb_reading(station_id_code=station_id_code)
             if cpcb_data and cpcb_time_str:
                 c_dt = dateutil.parser.isoparse(cpcb_time_str)
                 matching_hour_key = c_dt.strftime("%Y-%m-%dT%H:00")
-
                 if matching_hour_key not in results:
                     results[matching_hour_key] = {}
 
-                # Supplement meteorological parameters if missing, never overwrite physical concentrations
+                # If OpenAQ has no ground reading at this hour, WAQI takes precedence over modelled
+                if results[matching_hour_key].get("source") != SOURCE_OPENAQ:
+                    results[matching_hour_key]["source"] = SOURCE_WAQI
+
+                # Supplement meteorological parameters if missing
                 for param in ["temperature", "humidity", "wind_speed"]:
                     if cpcb_data.get(param) is not None and results[matching_hour_key].get(param) is None:
                         results[matching_hour_key][param] = cpcb_data[param]
 
                 if "sub_indices" in cpcb_data:
                     results[matching_hour_key]["waqi_sub_indices"] = cpcb_data["sub_indices"]
+                if "overall_aqi" in cpcb_data and cpcb_data["overall_aqi"] is not None:
+                    results[matching_hour_key]["waqi_overall_aqi"] = cpcb_data["overall_aqi"]
         except Exception as e:
-            logger.warning(f"Could not attach WAQI live observation: {e}")
+            logger.warning(f"Could not attach WAQI live observation for {station_id_code}: {e}")
 
         return results

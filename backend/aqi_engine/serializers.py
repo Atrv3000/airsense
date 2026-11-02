@@ -27,6 +27,8 @@ class AQIRecordSerializer(serializers.ModelSerializer):
     is_stale = serializers.SerializerMethodField()
     freshness_hours = serializers.SerializerMethodField()
     freshness_label = serializers.SerializerMethodField()
+    ground_age_hours = serializers.SerializerMethodField()
+    is_ground_stale = serializers.SerializerMethodField()
 
     class Meta:
         model = AQIRecord
@@ -43,6 +45,8 @@ class AQIRecordSerializer(serializers.ModelSerializer):
             'is_stale',
             'freshness_hours',
             'freshness_label',
+            'ground_age_hours',
+            'is_ground_stale',
             'ingested_at',
             'overall_aqi',
             'prominent_pollutant',
@@ -92,19 +96,44 @@ class AQIRecordSerializer(serializers.ModelSerializer):
         now = timezone.now()
         return round(max(0.0, (now - obj.recorded_at).total_seconds() / 3600.0), 1)
 
+    def get_ground_age_hours(self, obj):
+        source = obj.raw_measurement.source if obj.raw_measurement else 'OPEN_METEO_MODELLED'
+        if source in ('CPCB_OFFICIAL', 'WAQI_FEED', 'OPENAQ_MEASURED'):
+            return self.get_freshness_hours(obj)
+        # Check station's latest ground observation if current row is modelled
+        if hasattr(obj.station, 'last_ground_observation_at') and obj.station.last_ground_observation_at:
+            now = timezone.now()
+            return round(max(0.0, (now - obj.station.last_ground_observation_at).total_seconds() / 3600.0), 1)
+        return None
+
+    def get_is_ground_stale(self, obj):
+        gh = self.get_ground_age_hours(obj)
+        return gh is None or gh > 6.0
+
     def get_is_stale(self, obj):
-        h = self.get_freshness_hours(obj)
-        return h is None or h > 6.0
+        # Stale reflects underlying measurement ground freshness
+        source = obj.raw_measurement.source if obj.raw_measurement else 'OPEN_METEO_MODELLED'
+        if source in ('CPCB_OFFICIAL', 'WAQI_FEED', 'OPENAQ_MEASURED'):
+            h = self.get_freshness_hours(obj)
+            return h is None or h > 6.0
+        return self.get_is_ground_stale(obj)
 
     def get_freshness_label(self, obj):
-        h = self.get_freshness_hours(obj)
-        if h is None:
-            return "Unknown"
-        if h < 1.0:
-            return "Just now (<1h)"
-        elif h <= 3.0:
-            return f"{h}h ago (Fresh)"
-        elif h <= 6.0:
-            return f"{h}h ago (Moderate)"
+        source = obj.raw_measurement.source if obj.raw_measurement else 'OPEN_METEO_MODELLED'
+        if source in ('CPCB_OFFICIAL', 'WAQI_FEED', 'OPENAQ_MEASURED'):
+            h = self.get_freshness_hours(obj)
+            if h is None:
+                return "Unknown"
+            if h < 1.0:
+                return "Just now (<1h)"
+            elif h <= 3.0:
+                return f"{h}h ago (Fresh)"
+            elif h <= 6.0:
+                return f"{h}h ago (Moderate)"
+            else:
+                return f"{h}h ago (Stale)"
         else:
-            return f"{h}h ago (Stale)"
+            gh = self.get_ground_age_hours(obj)
+            if gh is None:
+                return "Modelled (No ground data)"
+            return f"Modelled (Ground {gh}h ago)"

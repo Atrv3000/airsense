@@ -13,23 +13,20 @@ class WeatherClient:
     BASE_URL = "https://api.open-meteo.com/v1/forecast"
 
     @classmethod
-    def fetch_weather_for_coords(cls, latitude: float, longitude: float, past_days: int = 1, forecast_days: int = 0):
+    def fetch_weather_for_coords(cls, latitude: float, longitude: float, past_days: int = 1):
         """
         Retrieves hourly weather parameters for the given coordinates.
-        Uses forecast_days=0 by default for observational data ingestion.
+        Fetches today's hours and past_days history; pipeline strictly drops future timestamps.
         Returns a dictionary mapping ISO timestamp strings to weather parameters:
         { '2026-10-13T03:00': {'temperature': 28.5, 'humidity': 75.0, 'wind_speed': 12.4, 'wind_direction': 240.0} }
         """
-        # forecast_days=1 retrieves current-day hours (pipeline strictly filters out future timestamps > now)
-        forecast_days = 1
-
         params = {
             "latitude": round(latitude, 4),
             "longitude": round(longitude, 4),
             "hourly": "temperature_2m,relative_humidity_2m,wind_speed_10m,wind_direction_10m",
             "timezone": "Asia/Kolkata",
             "past_days": past_days,
-            "forecast_days": forecast_days
+            "forecast_days": 1
         }
 
         try:

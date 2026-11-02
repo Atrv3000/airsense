@@ -1,11 +1,11 @@
 """
 Automated Task Scheduler for AirSense Mumbai.
 Orchestrates periodic background jobs suitable for Docker containers and headless deployments:
-  1. Hourly data ingestion & NAQI calculation (ingest_air_data)
+  1. Air quality & meteorological data ingestion (ingest_air_data)
   2. Multi-horizon ML forecast precomputation (precompute_forecasts)
   3. Forecast accuracy verification & rolling error metrics (verify_forecasts)
   4. CPCB health alert evaluation and Expo push delivery (generate_alerts)
-Model retraining is intentionally separated into a less frequent / standalone job.
+Schedules by wall clock to prevent time drift between cycles.
 """
 
 import time
@@ -16,22 +16,24 @@ from datetime import datetime
 from django.core.management.base import BaseCommand
 from django.core.management import call_command
 from django.utils import timezone
+from django.conf import settings
 
 logger = logging.getLogger(__name__)
 
 class Command(BaseCommand):
-    help = "Runs automated background pipeline (ingestion, forecasts, verification, alerts) on a periodic schedule."
+    help = "Runs automated background pipeline (ingestion, forecasts, verification, alerts) on a periodic wall-clock schedule."
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.running = True
 
     def add_arguments(self, parser):
+        default_interval = getattr(settings, 'SCHEDULER_INTERVAL_SECONDS', 900)
         parser.add_argument(
             '--interval',
             type=int,
-            default=300,
-            help='Target cycle interval in seconds between runs (default: 300s / 5 minutes, subject to provider rate limits)'
+            default=default_interval,
+            help=f'Target cycle interval in seconds (default: {default_interval}s / {round(default_interval/60)} minutes, configurable via SCHEDULER_INTERVAL_SECONDS)'
         )
         parser.add_argument(
             '--once',
@@ -119,6 +121,7 @@ class Command(BaseCommand):
     def handle(self, *args, **options):
         interval = options['interval']
         run_once = options['once']
+        interval_min = max(1, round(interval / 60))
 
         # Setup graceful signal handlers
         try:
@@ -129,19 +132,25 @@ class Command(BaseCommand):
 
         self.stdout.write(self.style.SUCCESS(
             f">>> AirSense Automated Scheduler Initialized.\n"
-            f"    Target Polling Interval: {interval} seconds (5 min) | Run Once: {run_once}\n"
-            f"    Note: Upstream ground station publication latency varies by provider (hourly or bi-hourly).\n"
+            f"    Target Wall-Clock Interval: {interval}s ({interval_min} min) | Run Once: {run_once}\n"
+            f"    Note: Scheduled by wall clock (next run = start + interval) to prevent execution drift.\n"
         ))
 
         while self.running:
+            cycle_wall_start = time.time()
             self.run_pipeline_cycle(options)
 
             if run_once or not self.running:
                 break
 
-            self.stdout.write(f"[Scheduler] Sleeping for {interval}s until next cycle (Ctrl+C to stop)...")
-            sleep_start = time.time()
-            while self.running and (time.time() - sleep_start < interval):
-                time.sleep(1)
+            # Wall-clock scheduling: next run = cycle_wall_start + interval
+            elapsed = time.time() - cycle_wall_start
+            sleep_duration = max(1.0, interval - elapsed)
+            next_run_str = datetime.fromtimestamp(cycle_wall_start + interval).strftime('%H:%M:%S')
+            self.stdout.write(f"[Scheduler] Sleeping {sleep_duration:.1f}s until next wall-clock cycle at {next_run_str} (Ctrl+C to stop)...")
+
+            sleep_target = time.time() + sleep_duration
+            while self.running and time.time() < sleep_target:
+                time.sleep(min(1.0, sleep_target - time.time()))
 
         self.stdout.write(self.style.SUCCESS("[Scheduler] Stopped cleanly."))

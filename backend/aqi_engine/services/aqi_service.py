@@ -109,11 +109,54 @@ class AQIService:
         return pollutants, is_fallback, sufficiency
 
     @classmethod
-    def calculate_for_measurement(cls, raw_measurement: RawMeasurement) -> AQIRecord:
+    def calculate_for_measurement(
+        cls,
+        raw_measurement: RawMeasurement,
+        waqi_sub_indices: dict = None,
+        waqi_overall_aqi: float = None
+    ) -> AQIRecord:
         """
         Calculates and stores NAQI for a single RawMeasurement instance
         using CPCB standard multi-hour averaging where historical data is present.
+        If measurement comes from WAQI_FEED, sub-indices are stored directly without
+        mis-converting indices to physical mass concentrations.
         """
+        # If measurement is from WAQI_FEED with pre-calculated sub-indices
+        if raw_measurement.source == 'WAQI_FEED' and (waqi_sub_indices or waqi_overall_aqi is not None):
+            subs = waqi_sub_indices or {}
+            overall_aqi = waqi_overall_aqi
+            if overall_aqi is None and subs:
+                overall_aqi = max(subs.values())
+
+            prominent = None
+            if subs:
+                prominent = max(subs.items(), key=lambda x: x[1])[0].upper()
+
+            cat, color = CPCBCalculator.get_category_and_color(overall_aqi) if overall_aqi is not None else ('Unavailable', '#64748b')
+
+            defaults = {
+                'station': raw_measurement.station,
+                'recorded_at': raw_measurement.recorded_at,
+                'sub_index_pm25': subs.get('pm25'),
+                'sub_index_pm10': subs.get('pm10'),
+                'sub_index_no2': subs.get('no2'),
+                'sub_index_so2': subs.get('so2'),
+                'sub_index_co': subs.get('co'),
+                'sub_index_o3': subs.get('o3'),
+                'overall_aqi': overall_aqi,
+                'prominent_pollutant': prominent,
+                'aqi_category': cat,
+                'color_hex': color,
+                'valid_criteria_met': True,
+                'is_instantaneous_fallback': False,
+                'data_sufficiency_flags': {'source': 'WAQI_FEED', 'sub_indices': subs},
+            }
+            aqi_rec, _ = AQIRecord.objects.update_or_create(
+                raw_measurement=raw_measurement,
+                defaults=defaults
+            )
+            return aqi_rec
+
         averaged_pollutants, is_fallback, sufficiency = cls.get_averaged_concentrations(
             station=raw_measurement.station,
             target_time=raw_measurement.recorded_at

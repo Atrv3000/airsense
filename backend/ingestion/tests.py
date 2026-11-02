@@ -395,3 +395,126 @@ class WAQIClientTestCase(TestCase):
             source="CPCB_OFFICIAL"
         )
         self.assertEqual(clean_cpcb.source, "CPCB_OFFICIAL")
+
+
+class PartAFreshnessAndPriorityTestCase(TestCase):
+    def setUp(self):
+        self.station = MonitoringStation.objects.create(
+            station_id="WORLI_TEST_01",
+            name="Worli Test",
+            latitude=19.01,
+            longitude=72.81,
+            is_active=True
+        )
+
+    def test_source_priority_hierarchy(self):
+        from ingestion.constants import (
+            SOURCE_PRIORITY,
+            get_source_priority,
+            is_ground_source,
+            should_override_source,
+        )
+        self.assertGreater(get_source_priority("CPCB_OFFICIAL"), get_source_priority("OPENAQ_MEASURED"))
+        self.assertGreater(get_source_priority("OPENAQ_MEASURED"), get_source_priority("WAQI_FEED"))
+        self.assertGreater(get_source_priority("WAQI_FEED"), get_source_priority("OPEN_METEO_MODELLED"))
+        
+        self.assertTrue(is_ground_source("CPCB_OFFICIAL"))
+        self.assertTrue(is_ground_source("OPENAQ_MEASURED"))
+        self.assertTrue(is_ground_source("WAQI_FEED"))
+        self.assertFalse(is_ground_source("OPEN_METEO_MODELLED"))
+        
+        # Ground overrides modelled (existing: OPEN_METEO_MODELLED, incoming: OPENAQ_MEASURED)
+        self.assertTrue(should_override_source("OPEN_METEO_MODELLED", "OPENAQ_MEASURED"))
+        self.assertTrue(should_override_source("OPEN_METEO_MODELLED", "WAQI_FEED"))
+        # Modelled cannot override ground (existing: OPENAQ_MEASURED, incoming: OPEN_METEO_MODELLED)
+        self.assertFalse(should_override_source("OPENAQ_MEASURED", "OPEN_METEO_MODELLED"))
+        self.assertFalse(should_override_source("WAQI_FEED", "OPEN_METEO_MODELLED"))
+
+    def test_openaq_max_age_cutoff(self):
+        from ingestion.services.air_quality_client import AirQualityClient, get_http_session
+        from django.conf import settings
+        
+        # Mock OpenAQ latest returning 48h old reading
+        stale_time = (timezone.now() - timedelta(hours=48)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {
+            "results": [
+                {
+                    "datetime": {"utc": stale_time},
+                    "parameter": {"name": "pm25"},
+                    "value": 45.0,
+                    "sensorsId": 999
+                }
+            ]
+        }
+        with patch.object(get_http_session(), "get", return_value=mock_resp):
+            client = AirQualityClient()
+            readings, reading_time = client.fetch_openaq_ground_readings("12345", max_age_hours=settings.GROUND_MAX_AGE_HOURS)
+            self.assertIsNone(readings)
+            self.assertIsNone(reading_time)
+
+    def test_honest_per_station_freshness_stats(self):
+        from ingestion.services.telemetry import IngestionTelemetry
+        from aqi_engine.models import AQIRecord
+        
+        now = timezone.now()
+        # Record a 2h old ground measurement
+        raw1 = RawMeasurement.objects.create(
+            station=self.station,
+            recorded_at=now - timedelta(hours=2),
+            pm25=30.0,
+            source="OPENAQ_MEASURED"
+        )
+        AQIRecord.objects.create(
+            station=self.station,
+            raw_measurement=raw1,
+            recorded_at=now - timedelta(hours=2),
+            overall_aqi=75,
+            aqi_category="Satisfactory"
+        )
+        
+        # Another station with only modelled data 1h ago
+        st2 = MonitoringStation.objects.create(
+            station_id="MOD_ONLY_02",
+            name="Modelled Only",
+            latitude=19.1,
+            longitude=72.9,
+            is_active=True
+        )
+        raw2 = RawMeasurement.objects.create(
+            station=st2,
+            recorded_at=now - timedelta(hours=1),
+            pm25=60.0,
+            source="OPEN_METEO_MODELLED"
+        )
+        AQIRecord.objects.create(
+            station=st2,
+            raw_measurement=raw2,
+            recorded_at=now - timedelta(hours=1),
+            overall_aqi=110,
+            aqi_category="Moderate"
+        )
+        
+        stats = IngestionTelemetry.get_freshness_stats()
+        self.assertIn("stations", stats)
+        # Verify freshness counts based on ground age
+        station_map = {s["station_id"]: s for s in stats["stations"]}
+        self.assertIn(self.station.station_id, station_map)
+        self.assertIn(st2.station_id, station_map)
+        self.assertFalse(station_map[self.station.station_id]["is_ground_stale"])
+        self.assertTrue(station_map[st2.station_id]["is_ground_stale"])
+
+    def test_ingestion_run_model_recording(self):
+        from ingestion.models import IngestionRun
+        now = timezone.now()
+        run = IngestionRun.objects.create(
+            started_at=now,
+            status="SUCCESS",
+            total_stations=1,
+            successful_stations=1,
+            failed_stations=0
+        )
+        self.assertIsNotNone(run.started_at)
+        self.assertEqual(run.status, "SUCCESS")
+

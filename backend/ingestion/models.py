@@ -117,3 +117,29 @@ class CleanMeasurement(models.Model):
 
     def __str__(self):
         return f"{self.station.name} Clean @ {self.recorded_at.strftime('%Y-%m-%d %H:%M')}"
+
+
+class IngestionRun(models.Model):
+    """
+    Persisted record of an ingestion cycle execution and provider telemetry.
+    Shares status between scheduler workers and web API processes.
+    """
+    started_at = models.DateTimeField(db_index=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    duration_seconds = models.FloatField(default=0.0)
+    status = models.CharField(max_length=32, default="RUNNING")  # RUNNING, SUCCESS, PARTIAL, FAILED
+    total_stations = models.IntegerField(default=0)
+    successful_stations = models.IntegerField(default=0)
+    failed_stations = models.IntegerField(default=0)
+    station_results = models.JSONField(default=dict, blank=True)
+    provider_telemetry = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-started_at']
+        verbose_name = 'Ingestion Run'
+        verbose_name_plural = 'Ingestion Runs'
+
+    def __str__(self):
+        return f"IngestionRun @ {self.started_at.strftime('%Y-%m-%d %H:%M')} ({self.status})"
+

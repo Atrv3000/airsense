@@ -19,6 +19,8 @@ class MonitoringStation(models.Model):
     city = models.CharField(max_length=64, default="Mumbai")
     state = models.CharField(max_length=64, default="Maharashtra")
     is_active = models.BooleanField(default=True)
+    last_ground_observation_at = models.DateTimeField(null=True, blank=True, help_text="Timestamp of most recent verified ground observation")
+    consecutive_stale_cycles = models.IntegerField(default=0, help_text="Consecutive scheduler cycles where ground data was stale (>GROUND_MAX_AGE_HOURS)")
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

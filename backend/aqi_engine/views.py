@@ -3,17 +3,21 @@ from rest_framework.response import Response
 from rest_framework import status
 from django.db.models import Avg, Max
 from django.utils import timezone
+from django.conf import settings
+from datetime import timedelta
 from core.models import MonitoringStation
 from aqi_engine.models import AQIRecord
 from aqi_engine.serializers import AQIRecordSerializer
 from aqi_engine.services.cpcb_calculator import CPCBCalculator
 from ingestion.services.telemetry import IngestionTelemetry
+from ingestion.constants import GROUND_SOURCES
 
 class LiveAQIListView(APIView):
     """
     Returns real-time latest AQI records for all active Mumbai stations,
     along with regional statistics (Mumbai City Average with statistical validity check,
     Dominant Pollutant, Data Source Badge, and Freshness Indicators).
+    Prefers most recent ground-measured row within GROUND_MAX_AGE_HOURS.
     """
     def get(self, request):
         active_stations = MonitoringStation.objects.filter(is_active=True)
@@ -21,8 +25,24 @@ class LiveAQIListView(APIView):
         aqi_values = []
         prominent_pollutants = []
 
+        now = timezone.now()
+        max_ground_age = getattr(settings, 'GROUND_MAX_AGE_HOURS', 12)
+        ground_cutoff = now - timedelta(hours=max_ground_age)
+
         for station in active_stations:
-            latest_record = AQIRecord.objects.filter(station=station).select_related('station', 'raw_measurement').order_by('-recorded_at').first()
+            # 1. Prefer fresh ground-measured record within max-age limit
+            latest_record = AQIRecord.objects.filter(
+                station=station,
+                raw_measurement__source__in=GROUND_SOURCES,
+                recorded_at__gte=ground_cutoff
+            ).select_related('station', 'raw_measurement').order_by('-recorded_at').first()
+
+            # 2. Otherwise return the overall latest record (labelled Modelled or Stale)
+            if not latest_record:
+                latest_record = AQIRecord.objects.filter(
+                    station=station
+                ).select_related('station', 'raw_measurement').order_by('-recorded_at').first()
+
             if latest_record:
                 serializer = AQIRecordSerializer(latest_record)
                 station_records.append(serializer.data)
@@ -56,16 +76,9 @@ class LiveAQIListView(APIView):
             f"Insufficient spatial representation ({reporting_count}/{total_active_count} stations reporting; minimum 3 required for regional validity)."
         )
 
+        # Compute pollutant means directly from station records without redundant DB queries
         def mean_of(field):
             vals = [s[field] for s in station_records if s.get(field) is not None]
-            if not vals:
-                from ingestion.models import CleanMeasurement
-                db_field = field.replace('raw_', '')
-                recent_vals = list(CleanMeasurement.objects.filter(
-                    station__is_active=True,
-                    **{f"{db_field}__isnull": False}
-                ).order_by('-recorded_at').values_list(db_field, flat=True)[:15])
-                vals = [v for v in recent_vals if v is not None]
             return round(sum(vals) / len(vals), 1 if field != 'raw_co' else 2) if vals else None
 
         city_pollutants = {
@@ -83,9 +96,16 @@ class LiveAQIListView(APIView):
         freshness_stats = IngestionTelemetry.get_freshness_stats()
         latest_observation = max([s['recorded_at'] for s in station_records if s.get('recorded_at')], default=None)
 
-        # Count ground measured vs modelled stations
+        # Ground vs modelled breakdowns and oldest ground observation
+        ground_dates = [
+            s['recorded_at'] for s in station_records
+            if s.get('data_classification') == 'Ground measured' and s.get('recorded_at')
+        ]
+        oldest_ground_observation = min(ground_dates) if ground_dates else None
+
         ground_stations_count = sum(1 for s in station_records if s.get('data_classification') == 'Ground measured')
         modelled_stations_count = sum(1 for s in station_records if s.get('data_classification') == 'Modelled')
+        stale_ground_stations_count = sum(1 for s in station_records if s.get('is_ground_stale'))
 
         return Response({
             "region": "Greater Mumbai",
@@ -98,10 +118,14 @@ class LiveAQIListView(APIView):
             "monitored_stations_count": len(station_records),
             "ground_measured_stations_count": ground_stations_count,
             "modelled_stations_count": modelled_stations_count,
+            "stale_ground_stations_count": stale_ground_stations_count,
+            "stale_stations_count": freshness_stats.get("stale_stations_count", stale_ground_stations_count),
+            "fresh_stations_count": freshness_stats.get("fresh_stations_count", 0),
             "worst_location": worst_station,
             "cleanest_location": cleanest_station,
             "city_pollutants": city_pollutants,
             "last_updated_at": latest_observation,
+            "oldest_ground_observation_at": oldest_ground_observation,
             "freshness": freshness_stats,
             "stations": station_records
         }, status=status.HTTP_200_OK)

@@ -14,5 +14,7 @@ class MonitoringStationSerializer(serializers.ModelSerializer):
             'city',
             'state',
             'is_active',
+            'last_ground_observation_at',
+            'consecutive_stale_cycles',
             'created_at'
         ]
