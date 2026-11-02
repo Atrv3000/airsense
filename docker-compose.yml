@@ -33,6 +33,8 @@ services:
              gunicorn airsense_backend.wsgi:application --bind 0.0.0.0:8000 --workers 3 --timeout 120"
     ports:
       - "8000:8000"
+    volumes:
+      - ml_models_data:/app/backend/ml_engine/saved_models
     environment:
       - DEBUG=False
       - SECRET_KEY=${SECRET_KEY:-airsense_prod_insecure_key_change_in_production}
@@ -55,6 +57,8 @@ services:
     container_name: airsense_scheduler
     restart: always
     command: python manage.py run_scheduler --interval 3600
+    volumes:
+      - ml_models_data:/app/backend/ml_engine/saved_models
     environment:
       - DEBUG=False
       - SECRET_KEY=${SECRET_KEY:-airsense_prod_insecure_key_change_in_production}
@@ -73,3 +77,4 @@ services:
 
 volumes:
   postgres_data:
+  ml_models_data:

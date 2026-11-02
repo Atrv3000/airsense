@@ -90,17 +90,52 @@ class AlertEngine:
     def evaluate_and_generate_alerts(cls, threshold_override: float = None, send_push: bool = True) -> List[AlertNotification]:
         """
         1. Evaluates latest AQIRecord for each station and creates alert when AQI >= 201 or in Poor/Very Poor/Severe.
-        2. Auto-resolves active alerts if the station's current AQI drops below the alert threshold.
+        2. Auto-resolves active alerts if the station's current AQI drops below the alert threshold (batch update).
         3. Evaluates ForecastRecord predictions and generates proactive forecast-based alerts.
         Safely handles cases where overall_aqi is None.
+        Suppresses new alerts when station ground data is stale unless ALERT_ON_STALE_DATA is True.
         """
+        from ingestion.services.telemetry import IngestionTelemetry
+        from django.conf import settings
+
         created_alerts = []
         now = timezone.now()
         threshold = threshold_override if threshold_override is not None else 201.0
-        stations = MonitoringStation.objects.filter(is_active=True)
+        stations = list(MonitoringStation.objects.filter(is_active=True))
+
+        # Auto-resolve stale forecast alerts older than 24 hours in a single batch
+        AlertNotification.objects.filter(
+            is_active=True,
+            is_forecast_alert=True,
+            created_at__lt=now - timezone.timedelta(hours=24)
+        ).update(is_active=False, resolved_at=now)
+
+        # Batch fetch latest AQIRecord per station to avoid N+1 queries
+        latest_records_qs = AQIRecord.objects.filter(
+            station__in=stations
+        ).select_related('station').order_by('station_id', '-recorded_at')
+
+        latest_by_station = {}
+        for r in latest_records_qs:
+            if r.station_id not in latest_by_station:
+                latest_by_station[r.station_id] = r
+
+        alert_on_stale = getattr(settings, 'ALERT_ON_STALE_DATA', False)
+        max_ground_age_h = getattr(settings, 'GROUND_MAX_AGE_HOURS', 12)
 
         for station in stations:
-            latest_record = AQIRecord.objects.filter(station=station).order_by('-recorded_at').first()
+            latest_record = latest_by_station.get(station.id)
+
+            # Ground observation staleness check
+            last_ground_time = station.last_ground_observation_at
+            if not last_ground_time and latest_record:
+                last_ground_time = latest_record.recorded_at
+
+            is_ground_stale = False
+            if last_ground_time:
+                ground_age_h = (now - last_ground_time).total_seconds() / 3600.0
+                if ground_age_h > max_ground_age_h:
+                    is_ground_stale = True
 
             if latest_record and latest_record.overall_aqi is not None:
                 # CPCB Rule Check: only records meeting valid criteria (min 3 pollutants, one PM) drive alerts
@@ -112,15 +147,21 @@ class AlertEngine:
                     aqi = latest_record.overall_aqi
                     cat = latest_record.aqi_category
 
-                    # AUTO-RESOLVE check: If AQI dropped below threshold, resolve existing active alerts for this station
+                    # AUTO-RESOLVE check: If AQI dropped below threshold, resolve existing active alerts for this station via batch update
                     if aqi < threshold and cat not in ['Poor', 'Very Poor', 'Severe']:
-                        active_alerts = AlertNotification.objects.filter(station=station, is_active=True, is_forecast_alert=False)
-                        for alert in active_alerts:
-                            alert.is_active = False
-                            alert.resolved_at = now
-                            alert.save()
-                            logger.info(f"Auto-resolved alert for {station.name} as AQI dropped to {aqi}.")
+                        resolved_count = AlertNotification.objects.filter(
+                            station=station,
+                            is_active=True,
+                            is_forecast_alert=False
+                        ).update(is_active=False, resolved_at=now)
+                        if resolved_count > 0:
+                            logger.info(f"Batch auto-resolved {resolved_count} active alert(s) for {station.name} as AQI dropped to {aqi}.")
                     elif aqi >= threshold or cat in ['Poor', 'Very Poor', 'Severe']:
+                        # Suppress new alert creation if station's ground data is stale
+                        if is_ground_stale and not alert_on_stale:
+                            logger.info(f"Skipping new alert creation for {station.name}: ground data is stale and ALERT_ON_STALE_DATA=False.")
+                            continue
+
                         advisory = cls.ADVISORY_MATRIX.get(cat, cls.ADVISORY_MATRIX['Poor'])
                         severity = advisory['severity']
 
@@ -156,47 +197,55 @@ class AlertEngine:
                             logger.info(f"Created Observed Alert: {alert}")
 
             # 4. Proactive Forecast-based alerts (+3h, +6h, +24h)
-            forecast_breaches = ForecastRecord.objects.filter(
+            forecast_breaches = list(ForecastRecord.objects.filter(
                 station=station,
                 predicted_aqi__gte=threshold,
                 horizon__in=[3, 6, 24]
-            ).order_by('horizon')
+            ).order_by('horizon'))
 
-            for fb in forecast_breaches:
-                f_cat = fb.category
-                f_aqi = fb.predicted_aqi
-                f_h = fb.horizon
-                advisory = cls.ADVISORY_MATRIX.get(f_cat, cls.ADVISORY_MATRIX['Poor'])
-                f_severity = advisory['severity']
-
-                f_existing = AlertNotification.objects.filter(
+            if not forecast_breaches:
+                # If no breaches forecasted, auto-resolve any active forecast alerts for this station
+                AlertNotification.objects.filter(
                     station=station,
                     is_active=True,
-                    is_forecast_alert=True,
-                    forecast_horizon_hours=f_h,
-                    created_at__gte=now - timezone.timedelta(hours=6)
-                ).exists()
+                    is_forecast_alert=True
+                ).update(is_active=False, resolved_at=now)
+            else:
+                for fb in forecast_breaches:
+                    f_cat = fb.category
+                    f_aqi = fb.predicted_aqi
+                    f_h = fb.horizon
+                    advisory = cls.ADVISORY_MATRIX.get(f_cat, cls.ADVISORY_MATRIX['Poor'])
+                    f_severity = advisory['severity']
 
-                if not f_existing:
-                    f_title = f"{f_severity} Predicted AQI Alert: {station.name} (+{f_h}h Forecast)"
-                    f_msg = (
-                        f"Machine learning forecast predicts AQI at {station.name} will reach "
-                        f"{round(f_aqi, 1)} ({f_cat}) in {f_h} hours."
-                    )
-                    f_alert = AlertNotification.objects.create(
+                    f_existing = AlertNotification.objects.filter(
                         station=station,
-                        title=f_title,
-                        message=f_msg,
-                        severity=f_severity,
-                        aqi_value=round(f_aqi, 1),
-                        category=f_cat,
-                        health_recommendations=advisory['tips'],
+                        is_active=True,
                         is_forecast_alert=True,
                         forecast_horizon_hours=f_h,
-                        is_active=True
-                    )
-                    created_alerts.append(f_alert)
-                    logger.info(f"Created Forecast Alert: {f_alert}")
+                        created_at__gte=now - timezone.timedelta(hours=6)
+                    ).exists()
+
+                    if not f_existing:
+                        f_title = f"{f_severity} Predicted AQI Alert: {station.name} (+{f_h}h Forecast)"
+                        f_msg = (
+                            f"Machine learning forecast predicts AQI at {station.name} will reach "
+                            f"{round(f_aqi, 1)} ({f_cat}) in {f_h} hours."
+                        )
+                        f_alert = AlertNotification.objects.create(
+                            station=station,
+                            title=f_title,
+                            message=f_msg,
+                            severity=f_severity,
+                            aqi_value=round(f_aqi, 1),
+                            category=f_cat,
+                            health_recommendations=advisory['tips'],
+                            is_forecast_alert=True,
+                            forecast_horizon_hours=f_h,
+                            is_active=True
+                        )
+                        created_alerts.append(f_alert)
+                        logger.info(f"Created Forecast Alert: {f_alert}")
 
         # Dispatch push notifications to registered device tokens
         if created_alerts and send_push:
@@ -204,6 +253,7 @@ class AlertEngine:
                 from alerts.services_push import ExpoPushClient
                 ExpoPushClient.send_alert_push_notifications(created_alerts)
             except Exception as e:
+                IngestionTelemetry.record_alert_error()
                 logger.error(f"Error dispatching push notifications: {e}")
 
         return created_alerts

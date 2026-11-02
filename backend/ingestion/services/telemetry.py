@@ -65,6 +65,28 @@ class IngestionTelemetry:
         }
     }
 
+    _error_counters = {
+        "ingestion": 0,
+        "ml_prediction": 0,
+        "alerts": 0
+    }
+
+    @classmethod
+    def record_ingestion_error(cls):
+        cls._error_counters["ingestion"] += 1
+
+    @classmethod
+    def record_ml_error(cls):
+        cls._error_counters["ml_prediction"] += 1
+
+    @classmethod
+    def record_alert_error(cls):
+        cls._error_counters["alerts"] += 1
+
+    @classmethod
+    def get_error_counters(cls) -> dict:
+        return dict(cls._error_counters)
+
     @classmethod
     def record_request(cls, provider: str, success: bool, duration_ms: float = 0.0, error: str = None):
         """
@@ -324,6 +346,7 @@ class IngestionTelemetry:
             },
             "providers": providers_report,
             "telemetry": freshness,
+            "error_counts": cls.get_error_counters(),
             "data_classifications": {
                 "ground_measured": "Direct CAAQMS physical observations from CPCB, MPCB, OpenAQ, or WAQI sensors",
                 "modelled": "Numerical atmospheric dispersion models and reanalysis from Open-Meteo",

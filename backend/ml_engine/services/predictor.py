@@ -4,7 +4,8 @@ import logging
 import joblib
 import numpy as np
 import pandas as pd
-from datetime import timedelta
+from datetime import timedelta, timezone as dt_timezone
+from zoneinfo import ZoneInfo
 from typing import Dict, List, Any
 from django.conf import settings
 from django.utils import timezone
@@ -17,6 +18,7 @@ from ml_engine.models import ForecastRecord
 from .feature_engineering import FeatureEngineer
 
 logger = logging.getLogger(__name__)
+KOLKATA_TZ = ZoneInfo("Asia/Kolkata")
 
 class AQIPredictor:
     """
@@ -82,48 +84,60 @@ class AQIPredictor:
         # Retrieve historical sequence (at least 25 hours) for lag and rolling state at time t
         recent_records = AQIRecord.objects.filter(
             station=station
-        ).select_related('station', 'raw_measurement').order_by('-recorded_at')[:36]
+        ).select_related('station', 'raw_measurement', 'raw_measurement__clean_measurement').order_by('-recorded_at')[:36]
 
         if len(recent_records) < 10:
             raise ValueError(f"Station '{station_id}' has insufficient recent data ({len(recent_records)} records).")
 
         records_data = []
         for r in reversed(recent_records):
+            meas = getattr(r.raw_measurement, 'clean_measurement', None) or r.raw_measurement
             records_data.append({
                 'station_id': station.station_id,
                 'latitude': station.latitude,
                 'longitude': station.longitude,
                 'recorded_at': r.recorded_at,
                 'overall_aqi': r.overall_aqi,
-                'pm25': r.raw_measurement.pm25 if r.raw_measurement else None,
-                'pm10': r.raw_measurement.pm10 if r.raw_measurement else None,
-                'no2': r.raw_measurement.no2 if r.raw_measurement else None,
-                'so2': r.raw_measurement.so2 if r.raw_measurement else None,
-                'co': r.raw_measurement.co if r.raw_measurement else None,
-                'o3': r.raw_measurement.o3 if r.raw_measurement else None,
-                'temperature': r.raw_measurement.temperature if r.raw_measurement else None,
-                'humidity': r.raw_measurement.humidity if r.raw_measurement else None,
-                'wind_speed': r.raw_measurement.wind_speed if r.raw_measurement else None,
-                'wind_direction': r.raw_measurement.wind_direction if r.raw_measurement else None
+                'pm25': meas.pm25 if meas else None,
+                'pm10': meas.pm10 if meas else None,
+                'no2': meas.no2 if meas else None,
+                'so2': meas.so2 if meas else None,
+                'co': meas.co if meas else None,
+                'o3': meas.o3 if meas else None,
+                'temperature': meas.temperature if meas else None,
+                'humidity': meas.humidity if meas else None,
+                'wind_speed': meas.wind_speed if meas else None,
+                'wind_direction': meas.wind_direction if meas else None
             })
 
         df_seq = pd.DataFrame(records_data)
         df_seq = df_seq.sort_values('recorded_at').reset_index(drop=True)
-        last_timestamp = df_seq['recorded_at'].iloc[-1]
+        raw_last_timestamp = df_seq['recorded_at'].iloc[-1]
+
+        # Timezone conversion: enforce Asia/Kolkata
+        if hasattr(raw_last_timestamp, 'tzinfo') and raw_last_timestamp.tzinfo is not None:
+            last_timestamp = raw_last_timestamp.astimezone(KOLKATA_TZ)
+        else:
+            last_timestamp = pd.to_datetime(raw_last_timestamp).tz_localize(dt_timezone.utc).tz_convert(KOLKATA_TZ)
+
+        now_dt = timezone.now()
+        input_data_age_hours = round((now_dt - last_timestamp).total_seconds() / 3600.0, 1)
+        max_age_limit = getattr(settings, 'FORECAST_MAX_AGE_HOURS', 3)
+        is_stale = input_data_age_hours > max_age_limit
 
         # Extract latest state at observation time t
         latest_aqi = df_seq['overall_aqi'].iloc[-1]
-        latest_pm25 = df_seq['pm25'].ffill().bfill().iloc[-1]
-        latest_pm10 = df_seq['pm10'].ffill().bfill().iloc[-1]
-        latest_no2 = df_seq['no2'].ffill().bfill().iloc[-1]
-        latest_so2 = df_seq['so2'].ffill().bfill().iloc[-1]
-        latest_co = df_seq['co'].ffill().bfill().iloc[-1]
-        latest_o3 = df_seq['o3'].ffill().bfill().iloc[-1]
+        latest_pm25 = df_seq['pm25'].ffill().bfill().fillna(40.0).iloc[-1]
+        latest_pm10 = df_seq['pm10'].ffill().bfill().fillna(70.0).iloc[-1]
+        latest_no2 = df_seq['no2'].ffill().bfill().fillna(20.0).iloc[-1]
+        latest_so2 = df_seq['so2'].ffill().bfill().fillna(15.0).iloc[-1]
+        latest_co = df_seq['co'].ffill().bfill().fillna(0.6).iloc[-1]
+        latest_o3 = df_seq['o3'].ffill().bfill().fillna(25.0).iloc[-1]
 
-        latest_temp = df_seq['temperature'].ffill().bfill().iloc[-1]
-        latest_humid = df_seq['humidity'].ffill().bfill().iloc[-1]
-        latest_wspeed = df_seq['wind_speed'].ffill().bfill().iloc[-1]
-        latest_wdir = df_seq['wind_direction'].ffill().bfill().iloc[-1]
+        latest_temp = df_seq['temperature'].ffill().bfill().fillna(28.0).iloc[-1]
+        latest_humid = df_seq['humidity'].ffill().bfill().fillna(70.0).iloc[-1]
+        latest_wspeed = df_seq['wind_speed'].ffill().bfill().fillna(5.0).iloc[-1]
+        latest_wdir = df_seq['wind_direction'].ffill().bfill().fillna(180.0).iloc[-1]
 
         wdir_rad = np.radians(latest_wdir)
         latest_u_wind = -latest_wspeed * np.sin(wdir_rad)
@@ -152,6 +166,8 @@ class AQIPredictor:
 
         # 1. Generate Direct Model Predictions on Anchor Horizons
         anchor_predictions: Dict[int, Dict[str, Any]] = {}
+        is_fallback = False
+        fallback_reason = None
 
         for h in anchor_horizons:
             target_time = last_timestamp + timedelta(hours=h)
@@ -207,14 +223,14 @@ class AQIPredictor:
 
             X_h = pd.DataFrame([feat_row])[FeatureEngineer.MULTI_HORIZON_FEATURE_COLUMNS]
 
-            # Choose model: specific direct model for h, or fallback
+            # Choose model: specific direct model for h, or fallback to persistence
             if direct_models and h in direct_models:
                 m_h = direct_models[h]
                 pred_val = float(m_h.predict(X_h)[0])
-            elif single_model:
-                # Fallback to single model
-                pred_val = float(single_model.predict(X_h[FeatureEngineer.FEATURE_COLUMNS[:len(X_h.columns)]])[0]) if len(FeatureEngineer.FEATURE_COLUMNS) <= len(X_h.columns) else latest_aqi
             else:
+                is_fallback = True
+                fallback_reason = f"Direct model for horizon +{h}h not found in artifacts; falling back to persistence baseline."
+                logger.warning(fallback_reason)
                 pred_val = latest_aqi
 
             pred_val = max(10.0, min(500.0, round(pred_val, 1)))
@@ -276,12 +292,18 @@ class AQIPredictor:
                 "color_hex": hex_color
             })
 
+        champion_name = "persistence_fallback" if is_fallback else metadata.get("champion_model", "XGBoost")
         return {
             "station_id": station.station_id,
             "station_name": station.name,
             "forecast_generated_at": last_timestamp.isoformat(),
-            "model_used": metadata.get("champion_model", "Random_Forest"),
-            "model_type": metadata.get("model_type", "Direct_Multi_Horizon"),
+            "model_used": champion_name,
+            "model_version": champion_name,
+            "model_type": "Persistence" if is_fallback else metadata.get("model_type", "Direct_Multi_Horizon"),
+            "is_fallback": is_fallback,
+            "fallback_reason": fallback_reason,
+            "is_stale": is_stale,
+            "input_data_age_hours": input_data_age_hours,
             "model_metrics": metadata.get("champion_metrics", {}),
             "per_horizon_metrics": metadata.get("per_horizon_metrics", {}),
             "residual_std": metadata.get("residual_std", fallback_std),

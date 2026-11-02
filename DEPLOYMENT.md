@@ -44,6 +44,17 @@ The repository provides a multi-container architecture in `docker-compose.yml`:
 - **`db`**: PostgreSQL 16 Alpine with persistent volume `postgres_data`.
 - **`backend`**: Gunicorn WSGI Python application server running migrations and serving the REST API.
 - **`scheduler`**: Automated background daemon running `python manage.py run_scheduler --interval 3600` for continuous ingestion, forecast precomputation, forecast verification, and alert push dispatching.
+- **`ml_models_data` volume**: Named volume mounted at `/app/backend/ml_engine/saved_models` across both `backend` and `scheduler`. This ensures trained model artifacts (`champion_aqi_model.joblib`, `direct_models.joblib`, `model_metadata.json`) persist across container updates and restarts.
+
+> [!NOTE]
+> If a freshly deployed backend starts before models are trained, endpoints `/api/v1/forecast/` and `/api/v1/models/` return a uniform HTTP 503 Service Unavailable with `{"status": "not_trained", "message": "No trained model found. Please run 'python manage.py train_models'."}`.
+>
+> To bootstrap models inside the running container:
+> ```bash
+> docker-compose exec backend python manage.py backfill_history --days 7
+> docker-compose exec backend python manage.py train_models
+> docker-compose exec backend python manage.py precompute_forecasts
+> ```
 
 ### Deploying with Docker:
 ```bash

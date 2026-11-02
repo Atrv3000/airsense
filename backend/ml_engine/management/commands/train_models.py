@@ -88,7 +88,7 @@ class Command(BaseCommand):
         measured_only = options.get('measured_only', False)
 
         self.stdout.write(self.style.NOTICE(">>> 1. Extracting historical records from database..."))
-        records = AQIRecord.objects.select_related('station', 'raw_measurement').order_by('recorded_at')
+        records = AQIRecord.objects.select_related('station', 'raw_measurement', 'raw_measurement__clean_measurement').order_by('recorded_at')
         total_count = records.count()
 
         if total_count < 500:
@@ -100,6 +100,7 @@ class Command(BaseCommand):
         data = []
         for r in records:
             source = r.raw_measurement.source if r.raw_measurement else 'UNKNOWN'
+            meas = getattr(r.raw_measurement, 'clean_measurement', None) or r.raw_measurement
             data.append({
                 'station_id': r.station.station_id,
                 'latitude': r.station.latitude,
@@ -107,16 +108,16 @@ class Command(BaseCommand):
                 'recorded_at': r.recorded_at,
                 'overall_aqi': r.overall_aqi,
                 'source': source,
-                'pm25': r.raw_measurement.pm25 if r.raw_measurement else None,
-                'pm10': r.raw_measurement.pm10 if r.raw_measurement else None,
-                'no2': r.raw_measurement.no2 if r.raw_measurement else None,
-                'so2': r.raw_measurement.so2 if r.raw_measurement else None,
-                'co': r.raw_measurement.co if r.raw_measurement else None,
-                'o3': r.raw_measurement.o3 if r.raw_measurement else None,
-                'temperature': r.raw_measurement.temperature if r.raw_measurement else None,
-                'humidity': r.raw_measurement.humidity if r.raw_measurement else None,
-                'wind_speed': r.raw_measurement.wind_speed if r.raw_measurement else None,
-                'wind_direction': r.raw_measurement.wind_direction if r.raw_measurement else None,
+                'pm25': meas.pm25 if meas else None,
+                'pm10': meas.pm10 if meas else None,
+                'no2': meas.no2 if meas else None,
+                'so2': meas.so2 if meas else None,
+                'co': meas.co if meas else None,
+                'o3': meas.o3 if meas else None,
+                'temperature': meas.temperature if meas else None,
+                'humidity': meas.humidity if meas else None,
+                'wind_speed': meas.wind_speed if meas else None,
+                'wind_direction': meas.wind_direction if meas else None,
             })
 
         df_all = pd.DataFrame(data)

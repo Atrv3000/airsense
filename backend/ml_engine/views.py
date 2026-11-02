@@ -1,13 +1,18 @@
 import os
 import json
+import logging
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from django.conf import settings
+from django.utils import timezone
 from .services.predictor import AQIPredictor
 from .models import ForecastRecord
 from aqi_engine.models import AQIRecord
 from core.models import MonitoringStation
+from ingestion.services.telemetry import IngestionTelemetry
+
+logger = logging.getLogger(__name__)
 
 class ForecastAPIView(APIView):
     """
@@ -15,6 +20,45 @@ class ForecastAPIView(APIView):
     Reads from precomputed ForecastRecord if available, or computes on demand.
     Returns HTTP 404 if station is specified but nonexistent.
     """
+    @staticmethod
+    def _get_dynamic_model_metadata():
+        save_dir = getattr(settings, 'ML_MODELS_DIR', os.path.join(settings.BASE_DIR, 'ml_engine', 'saved_models'))
+        metadata_path = os.path.join(save_dir, 'model_metadata.json')
+        if not os.path.exists(metadata_path):
+            return {
+                "champion_model": None,
+                "model_version": None,
+                "mae": None,
+                "rmse": None,
+                "r2": None,
+                "validation_type": None,
+                "horizons": None
+            }
+        try:
+            with open(metadata_path, 'r') as f:
+                raw = json.load(f)
+            champ_metrics = raw.get("champion_metrics", {})
+            return {
+                "champion_model": raw.get("champion_model"),
+                "model_version": raw.get("champion_model"),
+                "mae": champ_metrics.get("MAE"),
+                "rmse": champ_metrics.get("RMSE"),
+                "r2": champ_metrics.get("R2_Score"),
+                "validation_type": raw.get("validation_type", "TimeSeriesSplit (5-Fold)"),
+                "horizons": raw.get("horizons", [1, 3, 6, 12, 24])
+            }
+        except Exception as e:
+            logger.warning(f"Error reading model_metadata.json: {e}")
+            return {
+                "champion_model": None,
+                "model_version": None,
+                "mae": None,
+                "rmse": None,
+                "r2": None,
+                "validation_type": None,
+                "horizons": None
+            }
+
     def get(self, request):
         station_id_param = request.query_params.get('station_id')
         hours = request.query_params.get('hours', 24)
@@ -36,9 +80,16 @@ class ForecastAPIView(APIView):
                 return Response({"error": "No monitoring stations registered."}, status=status.HTTP_404_NOT_FOUND)
             station_id = station.station_id
 
+        meta_dict = self._get_dynamic_model_metadata()
+        max_age_hours = getattr(settings, 'FORECAST_MAX_AGE_HOURS', 3)
+        now_dt = timezone.now()
+
         # 1. Try reading from precomputed ForecastRecord for the latest batch
         latest_rec = ForecastRecord.objects.filter(station=station).order_by('-made_at').first()
         if latest_rec:
+            age_hours = round((now_dt - latest_rec.made_at).total_seconds() / 3600.0, 1)
+            is_stale = age_hours > max_age_hours
+
             cached_forecasts = ForecastRecord.objects.filter(
                 station=station,
                 made_at=latest_rec.made_at,
@@ -81,22 +132,17 @@ class ForecastAPIView(APIView):
                     "model_used": latest_rec.model_version,
                     "model_version": latest_rec.model_version,
                     "horizon_hours": len(forecast_items),
+                    "is_stale": is_stale,
+                    "input_data_age_hours": age_hours,
                     "forecasts": forecast_items,
                     "actual_vs_predicted": comparison,
-                    "model_metadata": {
-                        "champion_model": "XGBoost",
-                        "model_version": latest_rec.model_version,
-                        "mae": 2.7,
-                        "rmse": 3.46,
-                        "r2": 0.958,
-                        "validation_type": "Holdout TimeSeriesSplit (5-Fold)",
-                        "horizons": [1, 3, 6, 12, 24]
-                    }
+                    "model_metadata": meta_dict
                 }, status=status.HTTP_200_OK)
 
         # 2. Compute on demand
         try:
             forecast_data = AQIPredictor.forecast_station_aqi(station_id, horizon_hours=hours_int)
+            forecast_data["model_metadata"] = meta_dict
             return Response(forecast_data, status=status.HTTP_200_OK)
         except FileNotFoundError as e:
             return Response({
@@ -106,7 +152,9 @@ class ForecastAPIView(APIView):
         except ValueError as e:
             return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
         except Exception as e:
-            return Response({"error": f"Internal prediction error: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            logger.error(f"Internal prediction error for station {station_id}: {e}", exc_info=True)
+            IngestionTelemetry.record_ml_error()
+            return Response({"error": "An internal error occurred during prediction computation."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 class ModelMetricsAPIView(APIView):
@@ -129,7 +177,8 @@ class ModelMetricsAPIView(APIView):
                 metadata = json.load(f)
             return Response(metadata, status=status.HTTP_200_OK)
         except Exception as e:
-            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            logger.error(f"Error reading model metrics: {e}", exc_info=True)
+            return Response({"error": "Unable to read model metrics."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 class ForecastVerificationAPIView(APIView):

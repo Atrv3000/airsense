@@ -22,7 +22,9 @@ def system_health_check(request):
             if row and row[0] == 1:
                 db_status = "Connected (PostgreSQL)"
     except Exception as e:
-        db_status = f"Database Error: {str(e)}"
+        import logging
+        logging.getLogger(__name__).error(f"Health check DB error: {e}")
+        db_status = "Database Error: Connection unavailable"
 
     telemetry = IngestionTelemetry.get_full_system_telemetry()
 

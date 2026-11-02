@@ -1,12 +1,13 @@
 import os
 import json
 import joblib
+from unittest.mock import patch, MagicMock
 from django.test import TestCase
 from rest_framework.test import APIClient
 from rest_framework import status
 import pandas as pd
 import numpy as np
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone as dt_timezone
 from zoneinfo import ZoneInfo
 from django.conf import settings
 from core.models import MonitoringStation
@@ -542,3 +543,129 @@ class ForecastVerificationTestCase(TestCase):
         self.assertIn("AIRSENSE MUMBAI - ROLLING FORECAST VERIFICATION", output)
         self.assertIn("Realized MAE", output)
         self.assertIn("+1h", output)
+
+
+class PartBBackendCorrectnessTestCase(TestCase):
+    def setUp(self):
+        self.tz = ZoneInfo("Asia/Kolkata")
+        self.station = MonitoringStation.objects.create(
+            station_id="PARTB_ST_01",
+            name="PartB Station",
+            latitude=19.05,
+            longitude=72.85,
+            is_active=True
+        )
+
+    def test_dynamic_model_metadata_view(self):
+        from unittest.mock import patch
+        mock_meta = {
+            "champion_model": "Custom_GBM",
+            "validation_type": "TimeSeriesSplit",
+            "horizons": [1, 3, 6, 12, 24],
+            "champion_metrics": {
+                "MAE": 1.23,
+                "RMSE": 2.34,
+                "R2_Score": 0.9876
+            }
+        }
+        with patch("ml_engine.views.ForecastAPIView._get_dynamic_model_metadata", return_value={
+            "champion_model": "Custom_GBM",
+            "model_version": "Custom_GBM",
+            "mae": 1.23,
+            "rmse": 2.34,
+            "r2": 0.9876,
+            "validation_type": "TimeSeriesSplit",
+            "horizons": [1, 3, 6, 12, 24]
+        }):
+            res = self.client.get(f'/api/v1/ml/forecast/?station_id={self.station.station_id}')
+            # Even if computing or returning cached, metadata must reflect mock_meta
+            if res.status_code == 200:
+                self.assertEqual(res.data["model_metadata"]["champion_model"], "Custom_GBM")
+                self.assertEqual(res.data["model_metadata"]["mae"], 1.23)
+                self.assertEqual(res.data["model_metadata"]["rmse"], 2.34)
+                self.assertEqual(res.data["model_metadata"]["r2"], 0.9876)
+
+    def test_kolkata_timezone_formatting(self):
+        now_utc = datetime.now(dt_timezone.utc)
+        for h in range(15):
+            t = now_utc - timedelta(hours=14 - h)
+            raw = RawMeasurement.objects.create(
+                station=self.station,
+                recorded_at=t,
+                pm25=50.0,
+                pm10=80.0,
+                temperature=28.0,
+                humidity=70.0,
+                wind_speed=5.0,
+                wind_direction=180.0,
+                source="OPENAQ_MEASURED"
+            )
+            AQIRecord.objects.create(
+                station=self.station,
+                raw_measurement=raw,
+                recorded_at=t,
+                overall_aqi=100.0,
+                aqi_category="Moderate",
+                valid_criteria_met=True
+            )
+
+        with patch("ingestion.services.weather_client.WeatherClient.fetch_forecast_weather_for_coords", return_value={}):
+            forecast_data = AQIPredictor.forecast_station_aqi(self.station.station_id, horizon_hours=3)
+            # Verify timezone offset +05:30 in generated timestamp
+            self.assertIn("+05:30", forecast_data["forecast_generated_at"])
+            for fc in forecast_data["forecasts"]:
+                self.assertIn("+05:30", fc["target_timestamp"])
+
+    def test_fallback_logic_when_models_missing(self):
+        now_utc = datetime.now(dt_timezone.utc)
+        for h in range(15):
+            t = now_utc - timedelta(hours=14 - h)
+            raw = RawMeasurement.objects.create(
+                station=self.station,
+                recorded_at=t,
+                pm25=40.0,
+                source="OPENAQ_MEASURED"
+            )
+            AQIRecord.objects.create(
+                station=self.station,
+                raw_measurement=raw,
+                recorded_at=t,
+                overall_aqi=90.0,
+                aqi_category="Satisfactory",
+                valid_criteria_met=True
+            )
+
+        # Mock direct_models as empty dict to trigger persistence fallback
+        with patch.object(AQIPredictor, "get_models_and_metadata", return_value=({}, None, {"residual_std": 10.0})):
+            with patch("ingestion.services.weather_client.WeatherClient.fetch_forecast_weather_for_coords", return_value={}):
+                res = AQIPredictor.forecast_station_aqi(self.station.station_id, horizon_hours=3)
+                self.assertTrue(res["is_fallback"])
+                self.assertEqual(res["model_used"], "persistence_fallback")
+                self.assertIsNotNone(res["fallback_reason"])
+                self.assertEqual(res["forecasts"][0]["predicted_aqi"], 90.0)
+
+    def test_stale_forecast_detection(self):
+        now_utc = datetime.now(dt_timezone.utc)
+        # 10 records all older than 6 hours
+        for h in range(15):
+            t = now_utc - timedelta(hours=20 - h)
+            raw = RawMeasurement.objects.create(
+                station=self.station,
+                recorded_at=t,
+                pm25=40.0,
+                source="OPENAQ_MEASURED"
+            )
+            AQIRecord.objects.create(
+                station=self.station,
+                raw_measurement=raw,
+                recorded_at=t,
+                overall_aqi=90.0,
+                aqi_category="Satisfactory",
+                valid_criteria_met=True
+            )
+
+        with patch("ingestion.services.weather_client.WeatherClient.fetch_forecast_weather_for_coords", return_value={}):
+            res = AQIPredictor.forecast_station_aqi(self.station.station_id, horizon_hours=3)
+            self.assertTrue(res["is_stale"])
+            self.assertGreater(res["input_data_age_hours"], 3.0)
+

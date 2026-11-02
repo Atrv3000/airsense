@@ -306,6 +306,7 @@ class DataPipeline:
             except Exception as e:
                 failed_stations += 1
                 summary["total_errors"] += 1
+                IngestionTelemetry.record_ingestion_error()
                 logger.error(f"Station {station.station_id} ingestion failed completely: {e}")
                 summary["details"][station.station_id] = {
                     "raw_created": 0,

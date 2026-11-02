@@ -141,6 +141,32 @@ class AlertEngineTestCase(TestCase):
         self.assertEqual(f_alerts[0].forecast_horizon_hours, 6)
         self.assertEqual(f_alerts[0].severity, "CRITICAL")
 
+    def test_alert_suppressed_when_ground_data_stale(self):
+        # Station with 20h old ground observation (> GROUND_MAX_AGE_HOURS=12)
+        old_time = timezone.now() - timezone.timedelta(hours=20)
+        self.station.last_ground_observation_at = old_time
+        self.station.save()
+
+        raw = RawMeasurement.objects.create(
+            station=self.station,
+            recorded_at=old_time,
+            pm25=150.0,
+            pm10=250.0,
+            source="OPENAQ_MEASURED"
+        )
+        AQIRecord.objects.create(
+            station=self.station,
+            raw_measurement=raw,
+            recorded_at=old_time,
+            overall_aqi=260.0,
+            aqi_category='Poor',
+            valid_criteria_met=True
+        )
+
+        # By default ALERT_ON_STALE_DATA is False -> alert must be suppressed
+        alerts = AlertEngine.evaluate_and_generate_alerts(threshold_override=201.0)
+        self.assertEqual(len(alerts), 0)
+
     def test_api_active_alerts_list_and_limit_validation(self):
         AlertNotification.objects.create(
             station=self.station,
