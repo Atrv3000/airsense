@@ -1,9 +1,11 @@
 import React, { useEffect } from 'react';
-import { StyleSheet, View } from 'react-native';
+import { StyleSheet, View, AppState, Platform } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { Ionicons } from '@expo/vector-icons';
+import { QueryClient, QueryClientProvider, focusManager, onlineManager } from '@tanstack/react-query';
+import NetInfo from '@react-native-community/netinfo';
 
 import HomeScreen from './screens/HomeScreen';
 import MapScreen from './screens/MapScreen';
@@ -13,6 +15,27 @@ import StationDetailScreen from './screens/StationDetailScreen';
 import { THEME } from './config';
 import { registerForPushNotificationsAsync } from './services/notificationService';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { ErrorBoundary } from './components/ErrorBoundary';
+import { OfflineNotice } from './components/OfflineNotice';
+
+// Online status management for TanStack Query
+onlineManager.setEventListener((setOnline) => {
+  return NetInfo.addEventListener((state) => {
+    setOnline(!!state.isConnected && state.isInternetReachable !== false);
+  });
+});
+
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      staleTime: 60_000,
+      gcTime: 300_000,
+      retry: 2,
+      refetchOnWindowFocus: true,
+      refetchOnReconnect: true,
+    },
+  },
+});
 
 const Tab = createBottomTabNavigator();
 const Stack = createNativeStackNavigator();
@@ -80,16 +103,32 @@ function MainTabs() {
 
 export default function App() {
   useEffect(() => {
-    registerForPushNotificationsAsync().catch((err) => {
-      console.warn('[AirSense] Push registration skipped:', err?.message || err);
+    // AppState listener for TanStack Query focusManager
+    const subscription = AppState.addEventListener('change', (status) => {
+      if (Platform.OS !== 'web') {
+        focusManager.setFocused(status === 'active');
+      }
     });
+
+    registerForPushNotificationsAsync().catch((err) => {
+      if (__DEV__) {
+        console.warn('[AirSense] Push registration skipped:', err?.message || err);
+      }
+    });
+
+    return () => subscription.remove();
   }, []);
 
   return (
-    <SafeAreaProvider>
-      <NavigationContainer>
-        <MainTabs />
-      </NavigationContainer>
-    </SafeAreaProvider>
+    <ErrorBoundary>
+      <QueryClientProvider client={queryClient}>
+        <SafeAreaProvider>
+          <OfflineNotice />
+          <NavigationContainer>
+            <MainTabs />
+          </NavigationContainer>
+        </SafeAreaProvider>
+      </QueryClientProvider>
+    </ErrorBoundary>
   );
 }

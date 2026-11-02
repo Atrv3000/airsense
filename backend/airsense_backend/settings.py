@@ -193,6 +193,11 @@ ML_MODELS_DIR = BASE_DIR / 'ml_engine' / 'saved_models'
 os.makedirs(ML_MODELS_DIR, exist_ok=True)
 
 # Ingestion, Freshness & Scheduler Configuration
+OPENAQ_API_KEY = os.getenv('OPENAQ_API_KEY')
+OPENAQ_API_BASE = os.getenv('OPENAQ_API_BASE', 'https://api.openaq.org/v3')
+OPEN_METEO_BASE_URL = os.getenv('OPEN_METEO_BASE_URL', 'https://api.open-meteo.com/v1/forecast')
+WAQI_API_TOKEN = os.getenv('WAQI_API_TOKEN')
+CPCB_API_TOKEN = os.getenv('CPCB_API_TOKEN')
 GROUND_MAX_AGE_HOURS = int(os.getenv('GROUND_MAX_AGE_HOURS', '12'))
 SCHEDULER_INTERVAL_SECONDS = int(os.getenv('SCHEDULER_INTERVAL_SECONDS', '900'))
 FORECAST_MAX_AGE_HOURS = int(os.getenv('FORECAST_MAX_AGE_HOURS', '3'))

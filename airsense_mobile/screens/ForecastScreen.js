@@ -11,7 +11,8 @@ import {
 import { LineChart } from 'react-native-chart-kit';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useFetch } from '../hooks/useFetch';
+import { useStations, useForecast, useHistoricalTrend, useModelMetrics, useForecastVerification } from '../hooks/useApi';
+import { RelativeTime } from '../components/RelativeTime';
 import { LoadingCard, ErrorCard, ErrorBanner, EmptyCard, SectionHeader, getAQIColor } from '../components/SharedComponents';
 import { ENDPOINTS, THEME, CPCB_COLORS, TYPOGRAPHY, SPACING } from '../config';
 
@@ -31,7 +32,7 @@ const CHART_CONFIG = {
 
 export default function ForecastScreen() {
   const insets = useSafeAreaInsets();
-  const stationsFetch = useFetch(ENDPOINTS.stations);
+  const stationsFetch = useStations();
   const stationList = Array.isArray(stationsFetch.data)
     ? stationsFetch.data
     : (stationsFetch.data?.results || stationsFetch.data?.stations || []);
@@ -45,36 +46,21 @@ export default function ForecastScreen() {
     }
   }, [stationList, selectedStation]);
 
-  const [currentTime, setCurrentTime] = useState(new Date());
-  useEffect(() => {
-    const timer = setInterval(() => setCurrentTime(new Date()), 60000);
-    return () => clearInterval(timer);
-  }, []);
-
-  const formattedDate = currentTime.toLocaleDateString('en-IN', {
+  const formattedDate = new Date().toLocaleDateString('en-IN', {
     weekday: 'short',
     day: 'numeric',
     month: 'short',
     year: 'numeric',
   });
 
-  const formattedClock = currentTime.toLocaleTimeString('en-IN', {
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: true,
-  });
-
   const currentStationId = selectedStation || (stationList[0]?.station_id || 'OPENAQ_6927');
 
-  const histUrl = `${ENDPOINTS.historicalAqi}?station_id=${currentStationId}&limit=24`;
-  const predUrl = `${ENDPOINTS.predict}?station_id=${currentStationId}&hours=24`;
-  const metricsUrl = ENDPOINTS.modelMetrics;
-  const verifUrl = `${ENDPOINTS.forecastVerification}?days=7`;
+  const hist = useHistoricalTrend(currentStationId, 24);
+  const pred = useForecast(currentStationId, 24);
+  const model = useModelMetrics();
+  const verif = useForecastVerification();
 
-  const hist  = useFetch(currentStationId ? histUrl : null);
-  const pred  = useFetch(currentStationId ? predUrl : null);
-  const model = useFetch(metricsUrl);
-  const verif = useFetch(verifUrl);
+  const formattedClock = new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
 
   const onRefresh = async () => {
     setRefreshing(true);
@@ -155,8 +141,10 @@ export default function ForecastScreen() {
   } : null;
 
   const metrics = model.data;
-  const champMetrics = metrics?.champion_metrics || { MAE: 2.7, RMSE: 3.46, R2_Score: 0.958 };
-  const modelVer = pred.data?.model_used || 'XGBoost Multi-Horizon (v1.2.0)';
+  const champMetrics = metrics?.champion_metrics || (metrics?.champion_model ? metrics?.metrics_comparison?.[metrics.champion_model] : null) || null;
+  const isFallback = pred.data?.is_fallback;
+  const isStale = pred.data?.is_stale;
+  const modelVer = pred.data?.model_used || (isFallback ? 'Persistence Baseline (Fallback)' : 'XGBoost Multi-Horizon');
   const genTime = pred.data?.forecast_generated_at
     ? new Date(pred.data.forecast_generated_at).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })
     : formattedClock;
@@ -232,19 +220,19 @@ export default function ForecastScreen() {
           <View style={styles.modelMetricsStrip}>
             <View style={styles.mMetricItem}>
               <Text style={styles.mMetricLabel}>MAE</Text>
-              <Text style={styles.mMetricVal}>{champMetrics.MAE ?? '2.7'}</Text>
+              <Text style={styles.mMetricVal}>{champMetrics?.MAE != null ? champMetrics.MAE : '--'}</Text>
               <Text style={styles.mMetricUnit}>AQI pts</Text>
             </View>
             <View style={styles.mMetricDivider} />
             <View style={styles.mMetricItem}>
               <Text style={styles.mMetricLabel}>RMSE</Text>
-              <Text style={styles.mMetricVal}>{champMetrics.RMSE ?? '3.46'}</Text>
+              <Text style={styles.mMetricVal}>{champMetrics?.RMSE != null ? champMetrics.RMSE : '--'}</Text>
               <Text style={styles.mMetricUnit}>AQI pts</Text>
             </View>
             <View style={styles.mMetricDivider} />
             <View style={styles.mMetricItem}>
               <Text style={styles.mMetricLabel}>R² Score</Text>
-              <Text style={[styles.mMetricVal, { color: THEME.success }]}>{champMetrics.R2_Score ?? '0.958'}</Text>
+              <Text style={[styles.mMetricVal, { color: THEME.success }]}>{champMetrics?.R2_Score != null ? champMetrics.R2_Score : '--'}</Text>
               <Text style={styles.mMetricUnit}>Holdout</Text>
             </View>
             <View style={styles.mMetricDivider} />
@@ -254,6 +242,20 @@ export default function ForecastScreen() {
               <Text style={styles.mMetricUnit}>Multi-step</Text>
             </View>
           </View>
+          {isFallback && (
+            <View style={{ backgroundColor: 'rgba(234, 179, 8, 0.15)', padding: 8, borderRadius: 6, marginTop: 8, borderWidth: 1, borderColor: 'rgba(234, 179, 8, 0.3)' }}>
+              <Text style={{ color: '#fbbf24', fontSize: 11, fontWeight: '600' }}>
+                Notice: Serving persistence baseline. {pred.data?.fallback_reason || 'ML models are being calibrated.'}
+              </Text>
+            </View>
+          )}
+          {isStale && (
+            <View style={{ backgroundColor: 'rgba(239, 68, 68, 0.15)', padding: 8, borderRadius: 6, marginTop: 8, borderWidth: 1, borderColor: 'rgba(239, 68, 68, 0.3)' }}>
+              <Text style={{ color: '#f87171', fontSize: 11, fontWeight: '600' }}>
+                Warning: Forecast generated from observations older than 3 hours ({pred.data?.input_data_age_hours ?? '--'}h old).
+              </Text>
+            </View>
+          )}
           <Text style={styles.modelDisclaimer}>
             Metrics computed on genuine holdout test split. No future ground measurements used as features.
           </Text>

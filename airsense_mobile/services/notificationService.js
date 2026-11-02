@@ -20,7 +20,7 @@ Notifications.setNotificationHandler({
  * Gracefully detects Expo Go on Android (where remote push notifications were removed in SDK 53+)
  * and avoids throwing unhandled native NullPointerExceptions.
  */
-export async function registerForPushNotificationsAsync() {
+export async function registerForPushNotificationsAsync(stationId = null) {
   let token = null;
 
   if (Platform.OS === 'web') {
@@ -33,11 +33,13 @@ export async function registerForPushNotificationsAsync() {
     Constants.executionEnvironment === ExecutionEnvironment?.StoreClient;
 
   if (Platform.OS === 'android' && isExpoGo) {
-    console.log(
-      '[AirSense] Notice: Remote push notifications are disabled in Expo Go on Android (SDK 53+). ' +
-      'All live data, maps, and forecasts remain fully functional. ' +
-      'For remote push, use a development build (npx expo run:android).'
-    );
+    if (__DEV__) {
+      console.log(
+        '[AirSense] Notice: Remote push notifications are disabled in Expo Go on Android (SDK 53+). ' +
+        'All live data, maps, and forecasts remain fully functional. ' +
+        'For remote push, use a development build (npx expo run:android).'
+      );
+    }
     return null;
   }
 
@@ -53,10 +55,12 @@ export async function registerForPushNotificationsAsync() {
           sound: 'default',
         });
       } catch (channelError) {
-        console.warn(
-          '[AirSense] Notification channel setup skipped:',
-          channelError?.message || channelError
-        );
+        if (__DEV__) {
+          console.warn(
+            '[AirSense] Notification channel setup skipped:',
+            channelError?.message || channelError
+          );
+        }
       }
     }
 
@@ -70,7 +74,9 @@ export async function registerForPushNotificationsAsync() {
       }
 
       if (finalStatus !== 'granted') {
-        console.log('[AirSense] Push notification permission not granted.');
+        if (__DEV__) {
+          console.log('[AirSense] Push notification permission not granted.');
+        }
         return null;
       }
 
@@ -85,27 +91,40 @@ export async function registerForPushNotificationsAsync() {
         token = pushTokenData.data;
 
         // Register device token with AirSense backend
+        const payload = {
+          token: token,
+          platform: Platform.OS.toUpperCase(),
+        };
+        if (stationId) {
+          payload.station_id = stationId;
+        }
+
         await fetch(ENDPOINTS.deviceToken, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
             'Accept': 'application/json',
           },
-          body: JSON.stringify({
-            token: token,
-            platform: Platform.OS.toUpperCase(),
-          }),
+          body: JSON.stringify(payload),
         });
 
-        console.log('[AirSense] Registered Expo push token:', token);
+        if (__DEV__) {
+          console.log('[AirSense] Registered Expo push token successfully.');
+        }
       } catch (error) {
-        console.warn('[AirSense] Push token retrieval skipped:', error?.message || error);
+        if (__DEV__) {
+          console.warn('[AirSense] Push token retrieval skipped:', error?.message || error);
+        }
       }
     } else {
-      console.log('[AirSense] Physical device required for remote push notifications.');
+      if (__DEV__) {
+        console.log('[AirSense] Physical device required for remote push notifications.');
+      }
     }
   } catch (err) {
-    console.warn('[AirSense] Push notification registration error:', err?.message || err);
+    if (__DEV__) {
+      console.warn('[AirSense] Push notification registration error:', err?.message || err);
+    }
   }
 
   return token;

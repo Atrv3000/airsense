@@ -11,7 +11,8 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useFetch } from '../hooks/useFetch';
+import { useQuery } from '@tanstack/react-query';
+import { useForecast, useHistoricalTrend } from '../hooks/useApi';
 import {
   LoadingCard, ErrorCard, ErrorBanner, EmptyCard, SectionHeader,
   AQIBadge, MetricPill, getAQIColor, getHealthAdvice,
@@ -28,9 +29,19 @@ export default function StationDetailScreen({ route, navigation }) {
   const stationName = station?.station_name || station?.name || stationId;
 
   const url = ENDPOINTS.stationAqi(stationId);
-  const { data, loading, error, refetch } = useFetch(url);
-  const forecastFetch = useFetch(`${ENDPOINTS.predict}?station_id=${stationId}&hours=24`);
-  const historyFetch = useFetch(`${ENDPOINTS.historicalAqi}?station_id=${stationId}&limit=24`);
+  const { data, isLoading: loading, error, refetch } = useQuery({
+    queryKey: ['stationDetail', stationId],
+    queryFn: async () => {
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return await res.json();
+    },
+    staleTime: 60_000,
+    refetchInterval: 300_000,
+  });
+
+  const forecastFetch = useForecast(stationId, 24);
+  const historyFetch = useHistoricalTrend(stationId, 24);
 
   const [refreshing, setRefreshing] = useState(false);
 
@@ -49,13 +60,13 @@ export default function StationDetailScreen({ route, navigation }) {
   const aqiColor = getAQIColor(aqiCat);
   const healthMsg = getHealthAdvice(aqiCat);
 
-  const isMeasured = current.source === 'OPENAQ_MEASURED' || current.source === 'CPCB_OFFICIAL';
+  const isMeasured = current.source === 'OPENAQ_MEASURED' || current.source === 'CPCB_OFFICIAL' || current.source === 'WAQI_FEED';
   const sourceLabel = current.source === 'CPCB_OFFICIAL'
     ? 'Official CPCB CAAQMS'
-    : (current.source === 'OPENAQ_MEASURED' ? 'OpenAQ Ground Station' : 'Open-Meteo Atmospheric Grid');
-  const feedType = current.source === 'CPCB_OFFICIAL'
-    ? 'Official Ground Sensor'
-    : (isMeasured ? 'Measured Sensor' : 'Modelled Reanalysis');
+    : (current.source === 'WAQI_FEED'
+      ? 'Official WAQI/CPCB Feed'
+      : (current.source === 'OPENAQ_MEASURED' ? 'OpenAQ Ground Station' : 'Open-Meteo Atmospheric Grid'));
+  const feedType = isMeasured ? 'Measured Sensor' : 'Modelled Reanalysis';
 
   const forecasts = forecastFetch.data?.forecasts || [];
   const historyList = historyFetch.data?.history || [];

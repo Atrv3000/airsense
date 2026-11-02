@@ -44,6 +44,8 @@ services:
       - DB_HOST=db
       - DB_PORT=5432
       - OPENAQ_API_KEY=${OPENAQ_API_KEY}
+      - WAQI_API_TOKEN=${WAQI_API_TOKEN}
+      - CPCB_API_TOKEN=${CPCB_API_TOKEN}
       - ALLOWED_HOSTS=*
     depends_on:
       db:
@@ -68,6 +70,8 @@ services:
       - DB_HOST=db
       - DB_PORT=5432
       - OPENAQ_API_KEY=${OPENAQ_API_KEY}
+      - WAQI_API_TOKEN=${WAQI_API_TOKEN}
+      - CPCB_API_TOKEN=${CPCB_API_TOKEN}
       - ALLOWED_HOSTS=*
     depends_on:
       db:

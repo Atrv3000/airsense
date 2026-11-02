@@ -21,7 +21,8 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { LineChart } from 'react-native-chart-kit';
-import { useFetch } from '../hooks/useFetch';
+import { useLiveAQI, useSystemTelemetry, useForecast, useHistoricalTrend } from '../hooks/useApi';
+import { RelativeTime } from '../components/RelativeTime';
 import {
   LoadingCard, ErrorCard, ErrorBanner, EmptyCard, SectionHeader,
   AQIBadge, MetricPill, StationCard,
@@ -49,30 +50,17 @@ export default function HomeScreen({ navigation }) {
   const [refreshing, setRefreshing] = useState(false);
   const [healthModalVisible, setHealthModalVisible] = useState(false);
 
-  // Core telemetry & data queries
-  const { data, loading, error, refetch } = useFetch(ENDPOINTS.liveAqi);
-  const telemetryFetch = useFetch(ENDPOINTS.healthTelemetry);
-  const forecastFetch = useFetch(`${ENDPOINTS.predict}?hours=24`);
-  const historyFetch = useFetch(`${ENDPOINTS.historicalAqi}?limit=12`);
+  // Core telemetry & data queries via TanStack Query
+  const { data, isLoading: loading, error, refetch } = useLiveAQI();
+  const telemetryFetch = useSystemTelemetry();
+  const forecastFetch = useForecast(null, 24);
+  const historyFetch = useHistoricalTrend(null, 12);
 
-  // Minute-interval clock state
-  const [currentTime, setCurrentTime] = useState(new Date());
-  useEffect(() => {
-    const timer = setInterval(() => setCurrentTime(new Date()), 60000);
-    return () => clearInterval(timer);
-  }, []);
-
-  const formattedDate = currentTime.toLocaleDateString('en-IN', {
+  const formattedDate = new Date().toLocaleDateString('en-IN', {
     weekday: 'short',
     day: 'numeric',
     month: 'short',
     year: 'numeric',
-  });
-
-  const formattedClock = currentTime.toLocaleTimeString('en-IN', {
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: true,
   });
 
   const onRefresh = async () => {
@@ -196,7 +184,17 @@ export default function HomeScreen({ navigation }) {
 
         {/* Failed background refresh notification without wiping visible UI */}
         {error && data && (
-          <ErrorBanner message={error} onRetry={refetch} />
+          <ErrorBanner message={error?.message || error} onRetry={refetch} />
+        )}
+
+        {/* Honest Ground Data Staleness Warning Banner */}
+        {data && (data.stale_ground_stations_count > 0 || (freshnessInfo && freshnessInfo.is_stale)) && (
+          <View style={styles.staleBanner}>
+            <Ionicons name="information-circle" size={16} color="#f59e0b" style={{ marginRight: 8 }} />
+            <Text style={styles.staleBannerText}>
+              Ground sensors reporting data older than 6–12h for {data.stale_ground_stations_count || 'several'} station(s). Observations supplemented with Open-Meteo atmospheric dispersion modeling.
+            </Text>
+          </View>
         )}
 
         {/* Primary Environmental Intelligence Hero Card */}
@@ -726,5 +724,23 @@ const styles = StyleSheet.create({
   weatherItemDivider: {
     width: 1,
     backgroundColor: THEME.border,
+  },
+  staleBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(245, 158, 11, 0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(245, 158, 11, 0.35)',
+    borderRadius: THEME.radiusMd,
+    marginHorizontal: 16,
+    marginBottom: 12,
+    padding: 12,
+  },
+  staleBannerText: {
+    flex: 1,
+    color: '#fbbf24',
+    fontSize: 12,
+    lineHeight: 17,
+    fontWeight: '500',
   },
 });

@@ -4,15 +4,42 @@
  * Active station alerts (measured & forecast), CPCB classification matrix,
  * activity restrictions, and emergency protocols without emojis or NaN states.
  */
-import React, { useState } from 'react';
+import React, { useState, memo } from 'react';
 import {
-  View, Text, StyleSheet, ScrollView, RefreshControl
+  View, Text, StyleSheet, FlatList, RefreshControl
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useFetch } from '../hooks/useFetch';
+import { useLiveAQI, useAlerts } from '../hooks/useApi';
 import { LoadingCard, ErrorCard, ErrorBanner, SectionHeader, getAQIColor } from '../components/SharedComponents';
 import { ENDPOINTS, THEME, CPCB_COLORS, TYPOGRAPHY, SPACING } from '../config';
+
+const AlertCardItem = memo(({ alert }) => {
+  const isForecast = alert.is_forecast_alert;
+  const aqiVal = alert.aqi_value ?? alert.actual_aqi;
+  const alertColor = (aqiVal != null && aqiVal >= 301) ? CPCB_COLORS['Very Poor'] : CPCB_COLORS.Poor;
+
+  return (
+    <View style={[styles.alertNotificationCard, { borderLeftColor: alertColor }]}>
+      <View style={styles.alertHeaderRow}>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.alertStationName} numberOfLines={1}>
+            {alert.station_name || alert.station_code || alert.station_id}
+          </Text>
+          <Text style={styles.alertTypeTag}>
+            {isForecast ? `Forecast Warning (+${alert.forecast_horizon_hours}h Horizon)` : 'Active Observed Exceedance'}
+          </Text>
+        </View>
+        <View style={[styles.alertScoreBadge, { backgroundColor: alertColor }]}>
+          <Text style={styles.alertScoreText}>
+            AQI {aqiVal != null ? Math.round(aqiVal) : '--'}
+          </Text>
+        </View>
+      </View>
+      <Text style={styles.alertMessage}>{alert.message}</Text>
+    </View>
+  );
+});
 
 const CPCB_TIERS = [
   {
@@ -86,8 +113,8 @@ const PRECAUTIONARY_PROTOCOLS = [
 
 export default function AlertsScreen() {
   const insets = useSafeAreaInsets();
-  const liveAqi = useFetch(ENDPOINTS.liveAqi);
-  const alertsFetch = useFetch(ENDPOINTS.alerts);
+  const liveAqi = useLiveAQI();
+  const alertsFetch = useAlerts();
   const [refreshing, setRefreshing] = useState(false);
 
   const onRefresh = async () => {
@@ -103,9 +130,124 @@ export default function AlertsScreen() {
 
   const activeAlerts = alertsFetch.data?.alerts || [];
 
+  const renderHeader = () => (
+    <>
+      {/* Header Title */}
+      <View style={[styles.headerBar, { paddingTop: Math.max(16, insets.top) }]}>
+        <Text style={styles.headerSubtitle}>Public Health Guidelines</Text>
+        <Text style={styles.headerTitle}>Advisories & Protocols</Text>
+      </View>
+
+      {/* Failed background refresh notification */}
+      {(liveAqi.error || alertsFetch.error) && (liveAqi.data || alertsFetch.data) && (
+        <ErrorBanner message={liveAqi.error || alertsFetch.error} onRetry={onRefresh} />
+      )}
+
+      {/* Current City Status Card */}
+      <View style={[styles.statusCard, { borderLeftColor: cityColor }]}>
+        <View style={styles.statusHeader}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.statusLabel}>Current Ambient Tier</Text>
+            <Text style={styles.statusCategory}>
+              {cityCat || (liveAqi.isLoading ? 'Assessing...' : (liveAqi.error ? 'Unavailable' : 'Observation Pending'))}
+            </Text>
+          </View>
+          <View style={styles.statusScoreWrap}>
+            <Text style={[styles.statusScore, { color: cityColor }]}>
+              {hasValidCityAqi ? Math.round(cityAQI) : '--'}
+            </Text>
+            <Text style={styles.statusScoreLabel}>AQI</Text>
+          </View>
+        </View>
+        <Text style={styles.statusExplanation}>
+          Mean of active monitoring station AQIs across Greater Mumbai based on Central Pollution Control Board (CPCB) NAQI guidelines.
+        </Text>
+      </View>
+
+      {/* Active Emergency & Forecast Alerts Header */}
+      <SectionHeader
+        title="Active Hotspot Alerts"
+        subtitle="Real-time threshold exceedances (AQI ≥ 201) and predictive warnings"
+      />
+      {alertsFetch.isLoading && <LoadingCard message="Checking active sensor warnings..." />}
+      {alertsFetch.error && !alertsFetch.data && <ErrorCard message={alertsFetch.error?.message || alertsFetch.error} onRetry={alertsFetch.refetch} />}
+      {!alertsFetch.isLoading && !alertsFetch.error && activeAlerts.length === 0 && (
+        <View style={styles.allClearCard}>
+          <Ionicons name="checkmark-circle-outline" size={20} color={THEME.success} />
+          <Text style={styles.allClearText}>
+            All active monitoring stations currently below Poor hotspot threshold (AQI &lt; 201).
+          </Text>
+        </View>
+      )}
+    </>
+  );
+
+  const renderFooter = () => (
+    <>
+      {/* CPCB Health Severity Matrix */}
+      <SectionHeader
+        title="NAQI Classification Matrix"
+        subtitle="Official regulatory thresholds and public advisories"
+      />
+      {CPCB_TIERS.map((tier) => (
+        <View key={tier.category} style={styles.tierCard}>
+          <View style={styles.tierHeader}>
+            <View style={[styles.tierColorBar, { backgroundColor: tier.color }]} />
+            <Text style={styles.tierTitle}>{tier.category}</Text>
+            <Text style={styles.tierRange}>AQI {tier.range}</Text>
+          </View>
+          <Text style={styles.tierSummary}>{tier.summary}</Text>
+          <View style={styles.tierGroupGrid}>
+            <View style={styles.tierGroup}>
+              <Text style={styles.tierGroupLabel}>General Public</Text>
+              <Text style={styles.tierGroupText}>{tier.general}</Text>
+            </View>
+            <View style={styles.tierGroup}>
+              <Text style={styles.tierGroupLabel}>Sensitive Individuals</Text>
+              <Text style={styles.tierGroupText}>{tier.sensitive}</Text>
+            </View>
+          </View>
+        </View>
+      ))}
+
+      {/* Regulatory & Safety Protocols */}
+      <SectionHeader
+        title="Protective Interventions"
+        subtitle="Standard operational recommendations for urban populations"
+      />
+      {PRECAUTIONARY_PROTOCOLS.map((p, idx) => (
+        <View key={idx} style={styles.protocolCard}>
+          <View style={styles.protocolHeader}>
+            <Ionicons name="shield-checkmark-outline" size={16} color={THEME.primaryLight} />
+            <Text style={styles.protocolTitle}>{p.title}</Text>
+          </View>
+          <Text style={styles.protocolDesc}>{p.description}</Text>
+        </View>
+      ))}
+
+      {/* Public Health Disclaimer */}
+      <View style={styles.disclaimerCard}>
+        <Ionicons name="information-circle-outline" size={16} color={THEME.textMuted} />
+        <Text style={styles.disclaimerText}>
+          Public Health Notice: Guidance is based on Central Pollution Control Board (CPCB) NAQI and WHO environmental health criteria. AirSense provides environmental risk indications, not clinical medical advice or individual diagnoses.
+        </Text>
+      </View>
+
+      <View style={{ height: 32 }} />
+    </>
+  );
+
   return (
     <View style={styles.container}>
-      <ScrollView
+      <FlatList
+        data={activeAlerts}
+        keyExtractor={(item) => String(item.id)}
+        renderItem={({ item }) => <AlertCardItem alert={item} />}
+        initialNumToRender={10}
+        maxToRenderPerBatch={10}
+        windowSize={5}
+        ListHeaderComponent={renderHeader}
+        ListFooterComponent={renderFooter}
         showsVerticalScrollIndicator={false}
         refreshControl={
           <RefreshControl
@@ -115,133 +257,7 @@ export default function AlertsScreen() {
             colors={[THEME.primary]}
           />
         }
-      >
-        {/* Header Title */}
-        <View style={[styles.headerBar, { paddingTop: Math.max(16, insets.top) }]}>
-          <Text style={styles.headerSubtitle}>Public Health Guidelines</Text>
-          <Text style={styles.headerTitle}>Advisories & Protocols</Text>
-        </View>
-
-        {/* Failed background refresh notification */}
-        {(liveAqi.error || alertsFetch.error) && (liveAqi.data || alertsFetch.data) && (
-          <ErrorBanner message={liveAqi.error || alertsFetch.error} onRetry={onRefresh} />
-        )}
-
-        {/* Current City Status Card */}
-        <View style={[styles.statusCard, { borderLeftColor: cityColor }]}>
-          <View style={styles.statusHeader}>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.statusLabel}>Current Ambient Tier</Text>
-              <Text style={styles.statusCategory}>
-                {cityCat || (liveAqi.loading ? 'Assessing...' : (liveAqi.error ? 'Unavailable' : 'Observation Pending'))}
-              </Text>
-            </View>
-            <View style={styles.statusScoreWrap}>
-              <Text style={[styles.statusScore, { color: cityColor }]}>
-                {hasValidCityAqi ? Math.round(cityAQI) : '--'}
-              </Text>
-              <Text style={styles.statusScoreLabel}>AQI</Text>
-            </View>
-          </View>
-          <Text style={styles.statusExplanation}>
-            Mean of active monitoring station AQIs across Greater Mumbai based on Central Pollution Control Board (CPCB) NAQI guidelines.
-          </Text>
-        </View>
-
-        {/* Active Emergency & Forecast Alerts */}
-        <SectionHeader
-          title="Active Hotspot Alerts"
-          subtitle="Real-time threshold exceedances (AQI ≥ 201) and predictive warnings"
-        />
-        {alertsFetch.loading ? (
-          <LoadingCard message="Checking active sensor warnings..." />
-        ) : alertsFetch.error ? (
-          <ErrorCard message={alertsFetch.error} onRetry={alertsFetch.refetch} />
-        ) : activeAlerts.length > 0 ? (
-          activeAlerts.map((alert) => {
-            const isForecast = alert.is_forecast_alert;
-            const aqiVal = alert.aqi_value ?? alert.actual_aqi;
-            const alertColor = (aqiVal != null && aqiVal >= 301) ? CPCB_COLORS['Very Poor'] : CPCB_COLORS.Poor;
-
-            return (
-              <View key={alert.id} style={[styles.alertNotificationCard, { borderLeftColor: alertColor }]}>
-                <View style={styles.alertHeaderRow}>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.alertStationName} numberOfLines={1}>{alert.station_name || alert.station_code || alert.station_id}</Text>
-                    <Text style={styles.alertTypeTag}>
-                      {isForecast ? `Forecast Warning (+${alert.forecast_horizon_hours}h Horizon)` : 'Active Observed Exceedance'}
-                    </Text>
-                  </View>
-                  <View style={[styles.alertScoreBadge, { backgroundColor: alertColor }]}>
-                    <Text style={styles.alertScoreText}>
-                      AQI {aqiVal != null ? Math.round(aqiVal) : '--'}
-                    </Text>
-                  </View>
-                </View>
-                <Text style={styles.alertMessage}>{alert.message}</Text>
-              </View>
-            );
-          })
-        ) : (
-          <View style={styles.allClearCard}>
-            <Ionicons name="checkmark-circle-outline" size={20} color={THEME.success} />
-            <Text style={styles.allClearText}>
-              All active monitoring stations currently below Poor hotspot threshold (AQI &lt; 201).
-            </Text>
-          </View>
-        )}
-
-        {/* CPCB Health Severity Matrix */}
-        <SectionHeader
-          title="NAQI Classification Matrix"
-          subtitle="Official regulatory thresholds and public advisories"
-        />
-        {CPCB_TIERS.map((tier) => (
-          <View key={tier.category} style={styles.tierCard}>
-            <View style={styles.tierHeader}>
-              <View style={[styles.tierColorBar, { backgroundColor: tier.color }]} />
-              <Text style={styles.tierTitle}>{tier.category}</Text>
-              <Text style={styles.tierRange}>AQI {tier.range}</Text>
-            </View>
-            <Text style={styles.tierSummary}>{tier.summary}</Text>
-            <View style={styles.tierGroupGrid}>
-              <View style={styles.tierGroup}>
-                <Text style={styles.tierGroupLabel}>General Public</Text>
-                <Text style={styles.tierGroupText}>{tier.general}</Text>
-              </View>
-              <View style={styles.tierGroup}>
-                <Text style={styles.tierGroupLabel}>Sensitive Individuals</Text>
-                <Text style={styles.tierGroupText}>{tier.sensitive}</Text>
-              </View>
-            </View>
-          </View>
-        ))}
-
-        {/* Regulatory & Safety Protocols */}
-        <SectionHeader
-          title="Protective Interventions"
-          subtitle="Standard operational recommendations for urban populations"
-        />
-        {PRECAUTIONARY_PROTOCOLS.map((p, idx) => (
-          <View key={idx} style={styles.protocolCard}>
-            <View style={styles.protocolHeader}>
-              <Ionicons name="shield-checkmark-outline" size={16} color={THEME.primaryLight} />
-              <Text style={styles.protocolTitle}>{p.title}</Text>
-            </View>
-            <Text style={styles.protocolDesc}>{p.description}</Text>
-          </View>
-        ))}
-
-        {/* Public Health Disclaimer */}
-        <View style={styles.disclaimerCard}>
-          <Ionicons name="information-circle-outline" size={16} color={THEME.textMuted} />
-          <Text style={styles.disclaimerText}>
-            Public Health Notice: Guidance is based on Central Pollution Control Board (CPCB) NAQI and WHO environmental health criteria. AirSense provides environmental risk indications, not clinical medical advice or individual diagnoses.
-          </Text>
-        </View>
-
-        <View style={{ height: 32 }} />
-      </ScrollView>
+      />
     </View>
   );
 }
