@@ -30,8 +30,8 @@ class Command(BaseCommand):
         parser.add_argument(
             '--interval',
             type=int,
-            default=3600,
-            help='Cycle interval in seconds between runs (default: 3600s / 1 hour)'
+            default=300,
+            help='Target cycle interval in seconds between runs (default: 300s / 5 minutes, subject to provider rate limits)'
         )
         parser.add_argument(
             '--once',
@@ -129,7 +129,8 @@ class Command(BaseCommand):
 
         self.stdout.write(self.style.SUCCESS(
             f">>> AirSense Automated Scheduler Initialized.\n"
-            f"    Interval: {interval} seconds | Run Once: {run_once}\n"
+            f"    Target Polling Interval: {interval} seconds (5 min) | Run Once: {run_once}\n"
+            f"    Note: Upstream ground station publication latency varies by provider (hourly or bi-hourly).\n"
         ))
 
         while self.running:

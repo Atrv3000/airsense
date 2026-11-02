@@ -34,17 +34,20 @@ export const API_BASE_URL = getApiBaseUrl();
 export const HOTSPOT_THRESHOLD = 201.0;
 
 export const ENDPOINTS = {
-  health:        `${API_BASE_URL}/api/v1/health/`,
-  stations:      `${API_BASE_URL}/api/v1/stations/`,
-  liveAqi:       `${API_BASE_URL}/api/v1/aqi/live/`,
-  stationAqi:    (id) => `${API_BASE_URL}/api/v1/aqi/station/${id}/`,
-  historicalAqi: `${API_BASE_URL}/api/v1/aqi/historical/`,
+  health:               `${API_BASE_URL}/api/v1/health/`,
+  healthTelemetry:      `${API_BASE_URL}/api/v1/health/telemetry/`,
+  ingestionTelemetry:   `${API_BASE_URL}/api/v1/ingestion/telemetry/`,
+  stations:             `${API_BASE_URL}/api/v1/stations/`,
+  liveAqi:              `${API_BASE_URL}/api/v1/aqi/live/`,
+  stationAqi:           (id) => `${API_BASE_URL}/api/v1/aqi/station/${id}/`,
+  historicalAqi:        `${API_BASE_URL}/api/v1/aqi/historical/`,
   predict:              `${API_BASE_URL}/api/v1/ml/predict/`,
   modelMetrics:         `${API_BASE_URL}/api/v1/ml/models/`,
   forecastVerification: `${API_BASE_URL}/api/v1/ml/verification/`,
   mapLayers:            `${API_BASE_URL}/api/v1/gis/map-layers/`,
   hotspots:             `${API_BASE_URL}/api/v1/gis/hotspots/`,
   alerts:               `${API_BASE_URL}/api/v1/alerts/`,
+  advisory:             `${API_BASE_URL}/api/v1/alerts/advisory/`,
   deviceToken:          `${API_BASE_URL}/api/v1/alerts/device-token/`,
 };
 

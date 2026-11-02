@@ -158,20 +158,25 @@ class IDWInterpolator:
         cls,
         target_lats: np.ndarray,
         target_lons: np.ndarray,
-        known_stations: List[Dict[str, Any]]
-    ) -> np.ndarray:
+        known_stations: List[Dict[str, Any]],
+        return_uncertainty: bool = False
+    ):
         """
         Predicts AQI using Ordinary Kriging (Gaussian Process Regression with Matern-3/2 spatial covariance).
+        If return_uncertainty=True, returns tuple of (preds, stds).
         """
         if not known_stations:
-            return np.zeros_like(target_lats)
+            zeros = np.zeros_like(target_lats)
+            return (zeros, zeros) if return_uncertainty else zeros
 
         X_train = np.array([[s['latitude'], s['longitude']] for s in known_stations], dtype=float)
         y_train = np.array([s['aqi'] for s in known_stations], dtype=float)
 
         if len(known_stations) < 3:
             # Fall back to IDW if too few stations for kriging covariance fitting
-            return cls.predict_points_idw(target_lats, target_lons, known_stations, power=2.0)
+            preds = cls.predict_points_idw(target_lats, target_lons, known_stations, power=2.0)
+            stds = np.full_like(preds, 15.0)
+            return (preds, stds) if return_uncertainty else preds
 
         # Matern-3/2 kernel models realistic non-differentiable atmospheric dispersion fields
         kernel = C(1.0, (1e-2, 1e3)) * Matern(length_scale=0.1, length_scale_bounds=(1e-2, 2.0), nu=1.5) + WhiteKernel(noise_level=0.5, noise_level_bounds=(1e-3, 5.0))
@@ -180,11 +185,13 @@ class IDWInterpolator:
         try:
             gpr.fit(X_train, y_train)
             X_target = np.column_stack([target_lats, target_lons])
-            preds = gpr.predict(X_target)
+            preds, stds = gpr.predict(X_target, return_std=True)
         except Exception:
             preds = cls.predict_points_idw(target_lats, target_lons, known_stations, power=2.0)
+            stds = np.full_like(preds, 15.0)
 
-        return np.clip(preds, 0.0, 500.0)
+        preds = np.clip(preds, 0.0, 500.0)
+        return (preds, stds) if return_uncertainty else preds
 
     @classmethod
     def predict_points_gbm(
@@ -246,8 +253,9 @@ class IDWInterpolator:
         # Generate predictions using selected spatial method
         target_method = method or cls.DEFAULT_METHOD
         method_clean = target_method.lower().strip()
+        stds = None
         if method_clean in ["kriging", "ordinary_kriging", "gpr"]:
-            interpolated_aqi = cls.predict_points_kriging(grid_lats, grid_lons, known_stations)
+            interpolated_aqi, stds = cls.predict_points_kriging(grid_lats, grid_lons, known_stations, return_uncertainty=True)
         elif method_clean in ["gbm", "spatial_gbm", "gradient_boosting"]:
             interpolated_aqi = cls.predict_points_gbm(grid_lats, grid_lons, known_stations)
         else:
@@ -258,6 +266,12 @@ class IDWInterpolator:
         # Minimum distance to closest station to avoid unbounded offshore extrapolation
         dist_matrix = cls.haversine_distance_matrix(grid_lats, grid_lons, station_lats, station_lons)
         min_dists = dist_matrix.min(axis=1)
+
+        # Spatial estimation uncertainty: use kriging posterior std when available, or distance-based error growth
+        if stds is not None:
+            uncertainties = np.round(stds, 1)
+        else:
+            uncertainties = np.round(8.0 + 1.8 * min_dists, 1)
 
         results = []
         half_lat = lat_step / 2.0
@@ -276,6 +290,9 @@ class IDWInterpolator:
                 'latitude': lat,
                 'longitude': lon,
                 'interpolated_aqi': aqi,
+                'spatial_uncertainty': float(uncertainties[i]),
+                'nearest_station_km': round(float(min_dists[i]), 1),
+                'data_classification': 'Spatially estimated',
                 'cell_bounds': [
                     [round(lat - half_lat, 5), round(lon - half_lon, 5)],
                     [round(lat + half_lat, 5), round(lon + half_lon, 5)]

@@ -65,6 +65,7 @@ class MapLayerService:
                         "recorded_at": None,
                         "source": getattr(station, 'source', 'CAAQMS_STATION'),
                         "is_measured": False,
+                        "data_classification": "Ground measured",
                         "source_label": "Monitoring Station (Current Reading Unavailable)",
                         "current_aqi": None,
                         "reading_available": False,
@@ -157,6 +158,7 @@ class MapLayerService:
                     "recorded_at": latest_aqi.recorded_at.isoformat(),
                     "source": source_tag,
                     "is_measured": is_measured,
+                    "data_classification": "Ground measured" if is_measured else "Modelled",
                     "source_label": (
                         "Official CPCB CAAQMS (Ground Measured)" if source_tag == "CPCB_OFFICIAL"
                         else ("OpenAQ Ground Sensor (Measured)" if source_tag == "OPENAQ_MEASURED"

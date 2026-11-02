@@ -232,6 +232,14 @@ export default function AlertsScreen() {
           </View>
         ))}
 
+        {/* Public Health Disclaimer */}
+        <View style={styles.disclaimerCard}>
+          <Ionicons name="information-circle-outline" size={16} color={THEME.textMuted} />
+          <Text style={styles.disclaimerText}>
+            Public Health Notice: Guidance is based on Central Pollution Control Board (CPCB) NAQI and WHO environmental health criteria. AirSense provides environmental risk indications, not clinical medical advice or individual diagnoses.
+          </Text>
+        </View>
+
         <View style={{ height: 32 }} />
       </ScrollView>
     </View>
@@ -427,5 +435,23 @@ const styles = StyleSheet.create({
   protocolDesc: {
     color: THEME.textSecondary,
     ...TYPOGRAPHY.body,
+  },
+  disclaimerCard: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+    marginHorizontal: 16,
+    marginTop: 12,
+    padding: 12,
+    backgroundColor: THEME.surface,
+    borderRadius: THEME.radiusSm,
+    borderWidth: 1,
+    borderColor: THEME.border,
+  },
+  disclaimerText: {
+    flex: 1,
+    color: THEME.textMuted,
+    fontSize: 10,
+    lineHeight: 14,
   },
 });

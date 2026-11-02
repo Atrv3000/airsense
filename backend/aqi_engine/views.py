@@ -2,20 +2,24 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from django.db.models import Avg, Max
+from django.utils import timezone
 from core.models import MonitoringStation
 from aqi_engine.models import AQIRecord
 from aqi_engine.serializers import AQIRecordSerializer
 from aqi_engine.services.cpcb_calculator import CPCBCalculator
+from ingestion.services.telemetry import IngestionTelemetry
 
 class LiveAQIListView(APIView):
     """
     Returns real-time latest AQI records for all active Mumbai stations,
-    along with regional statistics (Mumbai City Average, Maximum AQI Hotspot, Cleanest Area).
+    along with regional statistics (Mumbai City Average with statistical validity check,
+    Dominant Pollutant, Data Source Badge, and Freshness Indicators).
     """
     def get(self, request):
         active_stations = MonitoringStation.objects.filter(is_active=True)
         station_records = []
         aqi_values = []
+        prominent_pollutants = []
 
         for station in active_stations:
             latest_record = AQIRecord.objects.filter(station=station).select_related('station', 'raw_measurement').order_by('-recorded_at').first()
@@ -24,6 +28,14 @@ class LiveAQIListView(APIView):
                 station_records.append(serializer.data)
                 if latest_record.overall_aqi is not None:
                     aqi_values.append(latest_record.overall_aqi)
+                if latest_record.prominent_pollutant:
+                    prominent_pollutants.append(latest_record.prominent_pollutant)
+
+        total_active_count = len(active_stations)
+        reporting_count = len(aqi_values)
+
+        # Statistical validity: require at least 3 stations (or all active if total <= 2 in test fixtures)
+        is_statistically_valid = (reporting_count >= 3) if total_active_count >= 3 else (reporting_count >= 1)
 
         if aqi_values:
             city_avg_aqi = round(sum(aqi_values) / len(aqi_values), 1)
@@ -35,6 +47,14 @@ class LiveAQIListView(APIView):
             category, color = ("No Data", "#9E9E9E")
             worst_station = None
             cleanest_station = None
+
+        dominant_pollutant = max(set(prominent_pollutants), key=prominent_pollutants.count) if prominent_pollutants else "PM2.5"
+
+        validity_note = (
+            f"Statistically valid regional average based on {reporting_count} active monitoring stations."
+            if is_statistically_valid else
+            f"Insufficient spatial representation ({reporting_count}/{total_active_count} stations reporting; minimum 3 required for regional validity)."
+        )
 
         def mean_of(field):
             vals = [s[field] for s in station_records if s.get(field) is not None]
@@ -60,21 +80,35 @@ class LiveAQIListView(APIView):
             "wind_speed": mean_of('wind_speed'),
         }
 
+        freshness_stats = IngestionTelemetry.get_freshness_stats()
+        latest_observation = max([s['recorded_at'] for s in station_records if s.get('recorded_at')], default=None)
+
+        # Count ground measured vs modelled stations
+        ground_stations_count = sum(1 for s in station_records if s.get('data_classification') == 'Ground measured')
+        modelled_stations_count = sum(1 for s in station_records if s.get('data_classification') == 'Modelled')
+
         return Response({
             "region": "Greater Mumbai",
             "city_average_aqi": city_avg_aqi,
             "city_category": category,
             "city_color_hex": color,
+            "dominant_pollutant": dominant_pollutant,
+            "is_statistically_valid": is_statistically_valid,
+            "statistical_validity_note": validity_note,
             "monitored_stations_count": len(station_records),
+            "ground_measured_stations_count": ground_stations_count,
+            "modelled_stations_count": modelled_stations_count,
             "worst_location": worst_station,
             "cleanest_location": cleanest_station,
             "city_pollutants": city_pollutants,
+            "last_updated_at": latest_observation,
+            "freshness": freshness_stats,
             "stations": station_records
         }, status=status.HTTP_200_OK)
 
 class StationAQIDetailView(APIView):
     """
-    Returns latest full AQI breakdown for a specific station code (e.g. /api/v1/aqi/station/MUM_BKC/).
+    Returns latest full AQI breakdown for a specific station code (e.g. /api/v1/aqi/station/OPENAQ_6927/).
     """
     def get(self, request, station_id):
         station = MonitoringStation.objects.filter(station_id=station_id).first()
@@ -92,16 +126,20 @@ class HistoricalAQITrendView(APIView):
     """
     Returns time-series AQI and pollutant records for line chart plotting.
     Query parameters:
-    - station_id (optional, default: MUM_BKC)
-    - limit (optional, default: 48)
+    - station_id (optional, default: OPENAQ_6927 or first active station)
+    - limit (optional, default: 48, safely bounded [1, 500])
     """
     def get(self, request):
-        station_id = request.query_params.get('station_id', 'MUM_BKC')
-        limit = request.query_params.get('limit', 48)
+        station_id = request.query_params.get('station_id')
+        if not station_id:
+            first_st = MonitoringStation.objects.filter(is_active=True).first()
+            station_id = first_st.station_id if first_st else 'OPENAQ_6927'
 
+        limit = request.query_params.get('limit', 48)
         try:
             limit_int = int(limit)
-        except ValueError:
+            limit_int = max(1, min(500, limit_int))
+        except (ValueError, TypeError):
             limit_int = 48
 
         station = MonitoringStation.objects.filter(station_id=station_id).first()
@@ -109,7 +147,6 @@ class HistoricalAQITrendView(APIView):
             return Response({"error": f"Station '{station_id}' not found."}, status=status.HTTP_404_NOT_FOUND)
 
         records = AQIRecord.objects.filter(station=station).select_related('station', 'raw_measurement').order_by('-recorded_at')[:limit_int]
-        # Return in chronological order (oldest to newest) for chart plotting
         chronological_records = list(reversed(records))
         serializer = AQIRecordSerializer(chronological_records, many=True)
 

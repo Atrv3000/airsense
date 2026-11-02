@@ -1,4 +1,5 @@
 import logging
+import time
 from datetime import datetime, timezone as py_timezone
 import dateutil.parser
 from zoneinfo import ZoneInfo
@@ -9,6 +10,7 @@ from .air_quality_client import AirQualityClient
 from .weather_client import WeatherClient
 from .preprocessor import DataPreprocessor
 from .station_seeder import seed_mumbai_stations
+from .telemetry import IngestionTelemetry
 from aqi_engine.services.aqi_service import AQIService
 
 logger = logging.getLogger(__name__)
@@ -87,7 +89,7 @@ class DataPipeline:
         raw_updated_count = 0
         saved_raw_objs = []
 
-        # Store in RawMeasurement
+        # Store in RawMeasurement with ground-measurement preservation
         for r_data in raw_records_to_process:
             defaults = {
                 "pm25": r_data["pm25"],
@@ -103,16 +105,43 @@ class DataPipeline:
                 "source": r_data["source"],
                 "is_validated": False,
             }
-            raw_obj, created = RawMeasurement.objects.update_or_create(
+
+            existing_raw = RawMeasurement.objects.filter(
                 station=station,
-                recorded_at=r_data["recorded_at"],
-                defaults=defaults
-            )
-            if created:
-                raw_created_count += 1
-            else:
+                recorded_at=r_data["recorded_at"]
+            ).first()
+
+            if existing_raw:
+                # RULE: Never overwrite ground measurements with modelled values!
+                is_existing_ground = existing_raw.source in ('CPCB_OFFICIAL', 'WAQI_FEED', 'OPENAQ_MEASURED')
+                is_incoming_modelled = r_data["source"] == 'OPEN_METEO_MODELLED'
+
+                if is_existing_ground and is_incoming_modelled:
+                    # Keep ground pollutant measurements intact, only fill missing weather
+                    updated = False
+                    for w_field in ["temperature", "humidity", "wind_speed", "wind_direction"]:
+                        if getattr(existing_raw, w_field) is None and r_data.get(w_field) is not None:
+                            setattr(existing_raw, w_field, r_data[w_field])
+                            updated = True
+                    if updated:
+                        existing_raw.save()
+                    raw_updated_count += 1
+                    saved_raw_objs.append(existing_raw)
+                    continue
+
+                for k, v in defaults.items():
+                    setattr(existing_raw, k, v)
+                existing_raw.save()
                 raw_updated_count += 1
-            saved_raw_objs.append(raw_obj)
+                saved_raw_objs.append(existing_raw)
+            else:
+                raw_obj = RawMeasurement.objects.create(
+                    station=station,
+                    recorded_at=r_data["recorded_at"],
+                    **defaults
+                )
+                raw_created_count += 1
+                saved_raw_objs.append(raw_obj)
 
         # 2. Preprocess & Clean: range check, spike detection
         clean_dicts = []
@@ -161,11 +190,27 @@ class DataPipeline:
                 "imputed_fields": c_dict.get("imputed_fields", []),
                 "raw_measurement": c_dict["raw_obj"]
             }
-            clean_obj, _ = CleanMeasurement.objects.update_or_create(
+            existing_clean = CleanMeasurement.objects.filter(
                 station=station,
-                recorded_at=c_dict["recorded_at"],
-                defaults=clean_defaults
-            )
+                recorded_at=c_dict["recorded_at"]
+            ).first()
+
+            if existing_clean:
+                is_clean_ground = existing_clean.source in ('CPCB_OFFICIAL', 'WAQI_FEED', 'OPENAQ_MEASURED')
+                if is_clean_ground and c_dict["source"] == 'OPEN_METEO_MODELLED':
+                    # Do not overwrite ground clean measurement with modelled values
+                    clean_obj = existing_clean
+                else:
+                    for k, v in clean_defaults.items():
+                        setattr(existing_clean, k, v)
+                    existing_clean.save()
+                    clean_obj = existing_clean
+            else:
+                clean_obj = CleanMeasurement.objects.create(
+                    station=station,
+                    recorded_at=c_dict["recorded_at"],
+                    **clean_defaults
+                )
             clean_saved_count += 1
 
             # Recalculate AQI based on CleanMeasurement / linked RawMeasurement
@@ -187,6 +232,9 @@ class DataPipeline:
         """
         Runs ingestion for all registered Mumbai monitoring stations.
         """
+        t0 = time.time()
+        IngestionTelemetry.start_pipeline_cycle()
+
         # Ensure stations are seeded with real OpenAQ verified stations
         seed_mumbai_stations()
 
@@ -211,4 +259,6 @@ class DataPipeline:
             summary["total_clean_saved"] += res["clean_saved"]
             summary["details"][station.station_id] = res
 
+        cycle_duration = time.time() - t0
+        IngestionTelemetry.finish_pipeline_cycle(duration_sec=cycle_duration, summary=summary)
         return summary

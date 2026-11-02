@@ -1,4 +1,5 @@
 from rest_framework import serializers
+from django.utils import timezone
 from .models import AQIRecord
 
 class AQIRecordSerializer(serializers.ModelSerializer):
@@ -18,6 +19,14 @@ class AQIRecordSerializer(serializers.ModelSerializer):
     humidity = serializers.FloatField(source='raw_measurement.humidity', read_only=True)
     wind_speed = serializers.FloatField(source='raw_measurement.wind_speed', read_only=True)
     source = serializers.CharField(source='raw_measurement.source', read_only=True, default='OPEN_METEO_MODELLED')
+    ingested_at = serializers.DateTimeField(source='raw_measurement.ingested_at', read_only=True, default=None)
+
+    # Data classification and freshness metadata
+    data_classification = serializers.SerializerMethodField()
+    provider = serializers.SerializerMethodField()
+    is_stale = serializers.SerializerMethodField()
+    freshness_hours = serializers.SerializerMethodField()
+    freshness_label = serializers.SerializerMethodField()
 
     class Meta:
         model = AQIRecord
@@ -29,6 +38,12 @@ class AQIRecordSerializer(serializers.ModelSerializer):
             'longitude',
             'recorded_at',
             'source',
+            'data_classification',
+            'provider',
+            'is_stale',
+            'freshness_hours',
+            'freshness_label',
+            'ingested_at',
             'overall_aqi',
             'prominent_pollutant',
             'aqi_category',
@@ -54,3 +69,42 @@ class AQIRecordSerializer(serializers.ModelSerializer):
             'humidity',
             'wind_speed'
         ]
+
+    def get_data_classification(self, obj):
+        source = obj.raw_measurement.source if obj.raw_measurement else 'OPEN_METEO_MODELLED'
+        if source in ('CPCB_OFFICIAL', 'WAQI_FEED', 'OPENAQ_MEASURED'):
+            return "Ground measured"
+        return "Modelled"
+
+    def get_provider(self, obj):
+        source = obj.raw_measurement.source if obj.raw_measurement else 'OPEN_METEO_MODELLED'
+        mapping = {
+            'CPCB_OFFICIAL': 'Central Pollution Control Board (CPCB)',
+            'WAQI_FEED': 'World Air Quality Index (WAQI)',
+            'OPENAQ_MEASURED': 'OpenAQ Ground Sensor Network',
+            'OPEN_METEO_MODELLED': 'Open-Meteo Atmospheric Model'
+        }
+        return mapping.get(source, 'Open-Meteo Atmospheric Model')
+
+    def get_freshness_hours(self, obj):
+        if not obj.recorded_at:
+            return None
+        now = timezone.now()
+        return round(max(0.0, (now - obj.recorded_at).total_seconds() / 3600.0), 1)
+
+    def get_is_stale(self, obj):
+        h = self.get_freshness_hours(obj)
+        return h is None or h > 6.0
+
+    def get_freshness_label(self, obj):
+        h = self.get_freshness_hours(obj)
+        if h is None:
+            return "Unknown"
+        if h < 1.0:
+            return "Just now (<1h)"
+        elif h <= 3.0:
+            return f"{h}h ago (Fresh)"
+        elif h <= 6.0:
+            return f"{h}h ago (Moderate)"
+        else:
+            return f"{h}h ago (Stale)"

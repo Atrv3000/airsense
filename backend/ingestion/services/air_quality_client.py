@@ -1,9 +1,11 @@
 import os
+import time
 import logging
 import requests
 from datetime import datetime, timezone
 import dateutil.parser
 from dotenv import load_dotenv
+from .telemetry import IngestionTelemetry
 
 load_dotenv()
 
@@ -53,15 +55,18 @@ class AirQualityClient:
 
         headers = {"X-API-Key": cls.OPENAQ_API_KEY}
         now_utc = datetime.now(timezone.utc)
+        t0 = time.time()
 
         try:
             # 1. Fetch sensor catalog for location to map sensor ID to pollutant parameter & units
             loc_res = requests.get(f"{cls.OPENAQ_API_BASE}/locations/{location_id}", headers=headers, timeout=8)
             if loc_res.status_code != 200:
+                IngestionTelemetry.record_request("OPENAQ", success=False, duration_ms=(time.time() - t0) * 1000, error=f"HTTP {loc_res.status_code}")
                 return None, None
 
             data = loc_res.json().get("results", [])
             if not data:
+                IngestionTelemetry.record_request("OPENAQ", success=False, duration_ms=(time.time() - t0) * 1000, error="Empty results")
                 return None, None
 
             sensors_meta = {}
@@ -75,12 +80,17 @@ class AirQualityClient:
 
             # 2. Fetch latest readings for this location
             latest_res = requests.get(f"{cls.OPENAQ_API_BASE}/locations/{location_id}/latest", headers=headers, timeout=8)
+            duration_ms = (time.time() - t0) * 1000
             if latest_res.status_code != 200:
+                IngestionTelemetry.record_request("OPENAQ", success=False, duration_ms=duration_ms, error=f"HTTP {latest_res.status_code}")
                 return None, None
 
             items = latest_res.json().get("results", [])
             if not items:
+                IngestionTelemetry.record_request("OPENAQ", success=True, duration_ms=duration_ms, error="No latest readings found")
                 return None, None
+
+            IngestionTelemetry.record_request("OPENAQ", success=True, duration_ms=duration_ms)
 
             readings = {}
             latest_reading_time = None
@@ -316,9 +326,12 @@ class AirQualityClient:
         results = {}
 
         # 1. Fetch modelled time series baseline from Open-Meteo
+        t_om = time.time()
         try:
             response = requests.get(cls.OPEN_METEO_AQ_URL, params=params, timeout=12)
+            om_duration = (time.time() - t_om) * 1000
             if response.status_code == 200:
+                IngestionTelemetry.record_request("OPEN_METEO", success=True, duration_ms=om_duration)
                 data = response.json()
                 hourly = data.get("hourly", {})
                 times = hourly.get("time", [])
@@ -344,7 +357,11 @@ class AirQualityClient:
                         "o3": None,
                         "source": "OPEN_METEO_MODELLED"
                     }
+            else:
+                IngestionTelemetry.record_request("OPEN_METEO", success=False, duration_ms=om_duration, error=f"HTTP {response.status_code}")
         except requests.RequestException as e:
+            om_duration = (time.time() - t_om) * 1000
+            IngestionTelemetry.record_request("OPEN_METEO", success=False, duration_ms=om_duration, error=str(e))
             logger.error(f"Open-Meteo query error for ({latitude}, {longitude}): {e}")
 
         # 2. Fetch real ground-level sensor data from OpenAQ and attach to the EXACT matching hour

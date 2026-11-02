@@ -8,7 +8,7 @@
         24
     ],
     "champion_model": "XGBoost",
-    "dataset_label": "Measured-Only Data (OPENAQ_MEASURED, CPCB_OFFICIAL)",
+    "dataset_label": "All Data",
     "champion_rmse": 0.01,
     "residual_std": 0.0,
     "persistence_rmse": 16.86,
@@ -441,14 +441,5 @@
             "q80": 0.0,
             "q90": 0.0
         }
-    },
-    "dual_evaluation": {
-        "measured_only_active": true,
-        "all_data_samples": 580,
-        "measured_only_samples": 580,
-        "all_data_champion_rmse": 0.01,
-        "measured_only_champion_rmse": 0.01,
-        "all_data_champion": "XGBoost",
-        "measured_only_champion": "XGBoost"
     }
 }

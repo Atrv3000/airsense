@@ -8,10 +8,12 @@ to specific monitoring stations, and labels all fetched feeds honestly as WAQI_F
 
 import logging
 import os
+import time
 from datetime import datetime, timezone
 from typing import Dict, Any, Optional, Tuple
 import dateutil.parser
 import requests
+from .telemetry import IngestionTelemetry
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +34,7 @@ class WAQIClient:
         "OPENAQ_6956":    "india/mumbai/powai",
         "OPENAQ_3409329": "india/mumbai/deonar",
         "OPENAQ_8039":    "india/mumbai/us-consulate",
+        "OPENAQ_3409514": "india/mumbai/ghatkopar",
     }
 
     @classmethod
@@ -113,20 +116,28 @@ class WAQIClient:
             return None, None
 
         url = f"{cls.API_BASE}/{slug}/?token={token}"
+        t0 = time.time()
         try:
             response = requests.get(url, timeout=8)
+            duration_ms = (time.time() - t0) * 1000
             if response.status_code != 200:
+                IngestionTelemetry.record_request("WAQI_CPCB", success=False, duration_ms=duration_ms, error=f"HTTP {response.status_code}")
                 return None, None
 
             data_json = response.json()
             if data_json.get("status") != "ok":
                 # Do NOT fall back to citywide 'mumbai' feed!
-                logger.warning(f"WAQI station lookup failed for {slug}: status={data_json.get('status')}")
+                err_msg = f"status={data_json.get('status')}"
+                IngestionTelemetry.record_request("WAQI_CPCB", success=False, duration_ms=duration_ms, error=err_msg)
+                logger.warning(f"WAQI station lookup failed for {slug}: {err_msg}")
                 return None, None
 
+            IngestionTelemetry.record_request("WAQI_CPCB", success=True, duration_ms=duration_ms)
             return cls.parse_waqi_response(data_json.get("data", {}))
 
         except requests.RequestException as e:
+            duration_ms = (time.time() - t0) * 1000
+            IngestionTelemetry.record_request("WAQI_CPCB", success=False, duration_ms=duration_ms, error=str(e))
             logger.warning(f"Network error querying WAQI for station slug {slug}: {e}")
             return None, None
 

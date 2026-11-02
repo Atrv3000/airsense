@@ -6,11 +6,13 @@ from rest_framework.response import Response
 from .models import RawMeasurement
 from .serializers import RawMeasurementSerializer
 from .services.pipeline import DataPipeline
+from .services.telemetry import IngestionTelemetry
 
 class MeasurementListAPIView(generics.ListAPIView):
     """
     Returns historical and real-time raw measurements for Mumbai stations.
-    Supports filtering by ?station_id=MUM_BKC or ?station=1, and ?limit=50.
+    Supports filtering by ?station_id=OPENAQ_6927 or ?station=1, and ?limit=50.
+    Safely clamps negative or excessive limits to [1, 500].
     """
     serializer_class = RawMeasurementSerializer
 
@@ -28,7 +30,8 @@ class MeasurementListAPIView(generics.ListAPIView):
 
         try:
             limit_val = int(limit) if limit else 100
-        except ValueError:
+            limit_val = max(1, min(500, limit_val))
+        except (ValueError, TypeError):
             limit_val = 100
 
         return queryset[:limit_val]
@@ -56,7 +59,8 @@ class TriggerIngestionAPIView(APIView):
         days = request.data.get('days', 2)
         try:
             days_int = int(days)
-        except ValueError:
+            days_int = max(1, min(30, days_int))
+        except (ValueError, TypeError):
             days_int = 2
 
         summary = DataPipeline.run_full_mumbai_pipeline(past_days=days_int)
@@ -64,3 +68,12 @@ class TriggerIngestionAPIView(APIView):
             "message": "Ingestion pipeline completed successfully.",
             "summary": summary
         }, status=status.HTTP_200_OK)
+
+class IngestionTelemetryAPIView(APIView):
+    """
+    GET /api/v1/ingestion/telemetry/
+    Returns live operational status and ingestion telemetry.
+    """
+    def get(self, request):
+        telemetry = IngestionTelemetry.get_full_system_telemetry()
+        return Response(telemetry, status=status.HTTP_200_OK)

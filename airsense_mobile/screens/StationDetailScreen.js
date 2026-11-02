@@ -14,7 +14,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFetch } from '../hooks/useFetch';
 import {
   LoadingCard, ErrorCard, ErrorBanner, EmptyCard, SectionHeader,
-  AQIBadge, MetricPill, getAQIColor, getHealthAdvice
+  AQIBadge, MetricPill, getAQIColor, getHealthAdvice,
+  ClassificationBadge, FreshnessPill
 } from '../components/SharedComponents';
 import { ENDPOINTS, THEME, TYPOGRAPHY, SPACING } from '../config';
 
@@ -91,9 +92,13 @@ export default function StationDetailScreen({ route, navigation }) {
         {/* Station Title & Honest Source Designation */}
         <View style={styles.titleSection}>
           <Text style={styles.stationTitle}>{stationName}</Text>
+          <View style={styles.badgeRow}>
+            <ClassificationBadge classification={current.data_classification || (isMeasured ? 'Ground measured' : 'Modelled')} />
+            <FreshnessPill isStale={current.is_stale} hours={current.freshness_hours} />
+          </View>
           <View style={styles.sourcePillRow}>
             <View style={[styles.sourceDot, { backgroundColor: isMeasured ? THEME.success : THEME.primaryLight }]} />
-            <Text style={styles.stationSubtitle}>{sourceLabel} ({feedType})</Text>
+            <Text style={styles.stationSubtitle}>{sourceLabel} ({current.provider || feedType})</Text>
           </View>
         </View>
 
@@ -317,6 +322,13 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     letterSpacing: -0.3,
     lineHeight: 26,
+  },
+  badgeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 6,
+    marginBottom: 4,
   },
   sourcePillRow: {
     flexDirection: 'row',

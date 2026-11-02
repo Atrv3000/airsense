@@ -17,6 +17,9 @@ class AlertEngine:
     ADVISORY_MATRIX = {
         'Good': {
             'severity': 'INFO',
+            'general_implications': "Air quality is clean and healthy. Little to no risk of pollution-related illness.",
+            'sensitive_precautions': "No special precautions needed. Safe for all demographics including seniors and children.",
+            'outdoor_activity': "Ideal conditions for outdoor sports, jogging, cycling, and window ventilation.",
             'tips': [
                 "Air quality is clean and healthy.",
                 "Ideal conditions for outdoor sports, walking, and outdoor ventilation.",
@@ -25,6 +28,9 @@ class AlertEngine:
         },
         'Satisfactory': {
             'severity': 'INFO',
+            'general_implications': "Air quality is acceptable. Only highly sensitive people may experience minor respiratory irritation.",
+            'sensitive_precautions': "Individuals with severe respiratory sensitivities should take notice of persistent coughing.",
+            'outdoor_activity': "Fully permissible conditions for regular outdoor activities and open transit.",
             'tips': [
                 "Air quality is acceptable for the general public.",
                 "Highly sensitive individuals should monitor for minor respiratory symptoms.",
@@ -33,6 +39,9 @@ class AlertEngine:
         },
         'Moderate': {
             'severity': 'WARNING',
+            'general_implications': "May cause breathing discomfort to people with asthma, heart disease, or chronic obstructive lung conditions.",
+            'sensitive_precautions': "Sensitive individuals and elderly should reduce prolonged heavy physical exertion outdoors.",
+            'outdoor_activity': "Normal daily activities are safe; reduce intense outdoor aerobic training during peak evening rush.",
             'tips': [
                 "People with asthma or lung conditions may experience discomfort.",
                 "Sensitive groups should reduce prolonged heavy exertion outdoors.",
@@ -41,6 +50,9 @@ class AlertEngine:
         },
         'Poor': {
             'severity': 'WARNING',
+            'general_implications': "Breathing discomfort on prolonged exposure. May trigger acute asthma attacks and upper respiratory irritation.",
+            'sensitive_precautions': "Children, seniors, and heart/lung patients should remain indoors and keep inhalers accessible.",
+            'outdoor_activity': "Avoid outdoor morning runs; wear a certified N95 respirator during outdoor transit.",
             'tips': [
                 "General public may experience breathing discomfort on prolonged exposure.",
                 "Sensitive groups, children, and elderly should avoid outdoor morning walks.",
@@ -50,6 +62,9 @@ class AlertEngine:
         },
         'Very Poor': {
             'severity': 'CRITICAL',
+            'general_implications': "Significant respiratory illness risk on prolonged exposure. Pronounced cardiovascular and pulmonary distress.",
+            'sensitive_precautions': "Vulnerable groups must remain indoors with sealed windows; run active HEPA purifiers.",
+            'outdoor_activity': "Strictly suspend all outdoor sports and strenuous exercise; avoid non-essential trips.",
             'tips': [
                 "Respiratory illness risk significantly increased on prolonged exposure.",
                 "Strictly avoid outdoor jogging, sports, or high-intensity exercise.",
@@ -59,6 +74,9 @@ class AlertEngine:
         },
         'Severe': {
             'severity': 'EMERGENCY',
+            'general_implications': "Health emergency: Severe respiratory impacts on healthy individuals and critical consequences for chronic diseases.",
+            'sensitive_precautions': "Strict indoor stay. Maintain a sealed clean room with active air filtration; seek medical care upon acute distress.",
+            'outdoor_activity': "Cancel all outdoor activities entirely; use certified particulate respirators (N95/N99) for any necessary exposure.",
             'tips': [
                 "Health emergency: Serious impacts on healthy individuals and critical impacts on existing diseases.",
                 "Avoid all outdoor activities entirely.",
@@ -193,18 +211,31 @@ class AlertEngine:
     @classmethod
     def get_station_advisory(cls, category: str, prominent_pollutant: str = None) -> Dict[str, Any]:
         """
-        Returns structured guidance based on CPCB category and prominent pollutant.
+        Returns structured public health guidance based on recognized CPCB NAQI standards.
+        Not presented as clinical medical diagnosis.
         """
         adv = cls.ADVISORY_MATRIX.get(category, cls.ADVISORY_MATRIX['Moderate'])
         tips = list(adv['tips'])
 
+        pollutant_note = None
         if prominent_pollutant == 'O3':
-            tips.append("Ozone levels peak in afternoon sunlight; prefer early morning outdoor tasks.")
+            pollutant_note = "Ozone concentration peaks in strong afternoon sunlight; prefer early morning or late evening outdoor tasks."
+            tips.append(pollutant_note)
         elif prominent_pollutant in ['PM2.5', 'PM10']:
-            tips.append("Particulate matter is high; wear a certified particulate mask (N95).")
+            pollutant_note = f"Fine particulate matter ({prominent_pollutant}) is high; wear a certified particulate mask (N95/FFP2)."
+            tips.append(pollutant_note)
+        elif prominent_pollutant in ['NO2', 'CO']:
+            pollutant_note = f"Combustion-related {prominent_pollutant} elevated; steer clear of heavy arterial traffic junctions."
+            tips.append(pollutant_note)
 
         return {
             'severity': adv['severity'],
             'category': category,
-            'recommendations': tips
+            'dominant_pollutant': prominent_pollutant or 'PM2.5',
+            'general_implications': adv.get('general_implications', ''),
+            'sensitive_group_precautions': adv.get('sensitive_precautions', ''),
+            'outdoor_activity_recommendations': adv.get('outdoor_activity', ''),
+            'pollutant_specific_note': pollutant_note,
+            'recommendations': tips,
+            'disclaimer': "Public health guidance based on official Central Pollution Control Board (CPCB) NAQI criteria. Not intended as individualized medical diagnosis."
         }

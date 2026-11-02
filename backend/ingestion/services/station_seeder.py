@@ -143,6 +143,15 @@ VERIFIED_MUMBAI_STATIONS = [
         "zone_type": "COMMERCIAL",
         "city": "Mumbai",
         "state": "Maharashtra"
+    },
+    {
+        "station_id": "OPENAQ_3409514",
+        "name": "Ghatkopar, Mumbai - BMC",
+        "latitude": 19.083694,
+        "longitude": 72.920967,
+        "zone_type": "RESIDENTIAL",
+        "city": "Mumbai",
+        "state": "Maharashtra"
     }
 ]
 

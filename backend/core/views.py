@@ -5,12 +5,14 @@ from django.db import connection
 from datetime import datetime
 from .models import MonitoringStation
 from .serializers import MonitoringStationSerializer
+from ingestion.services.telemetry import IngestionTelemetry
 
 @api_view(['GET'])
 def system_health_check(request):
     """
     Health check endpoint to verify backend status, PostgreSQL database connectivity,
-    and server time.
+    server time, and complete operational provider telemetry.
+    Preserves exact backward-compatible keys ('status', 'database', 'project', 'timestamp', 'version').
     """
     db_status = "Disconnected"
     try:
@@ -22,13 +24,26 @@ def system_health_check(request):
     except Exception as e:
         db_status = f"Database Error: {str(e)}"
 
+    telemetry = IngestionTelemetry.get_full_system_telemetry()
+
     return Response({
         "status": "online",
         "project": "AirSense - Mumbai Air Quality Monitoring & Hotspot Prediction",
         "database": db_status,
         "timestamp": datetime.now().isoformat(),
-        "version": "1.0.0"
+        "version": "1.0.0",
+        "telemetry": telemetry
     })
+
+@api_view(['GET'])
+def system_telemetry_check(request):
+    """
+    Dedicated operational telemetry endpoint for system health monitoring dashboards.
+    Reports OpenAQ, Open-Meteo, and WAQI/CPCB live connectivity, observation freshness,
+    failed request counters, and ingestion cycle durations.
+    """
+    telemetry = IngestionTelemetry.get_full_system_telemetry()
+    return Response(telemetry, status=status.HTTP_200_OK)
 
 class StationListAPIView(generics.ListAPIView):
     """

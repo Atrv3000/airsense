@@ -55,6 +55,9 @@ class HotspotDetector:
                         "category": category,
                         "color_hex": color,
                         "severity": "CRITICAL" if aqi >= 301 else "WARNING",
+                        "data_classification": "Spatially estimated",
+                        "spatial_uncertainty": pt.get('spatial_uncertainty', 12.0),
+                        "nearest_station_km": pt.get('nearest_station_km', 2.5),
                         "is_hotspot": True
                     }
                 }
@@ -86,6 +89,9 @@ class HotspotDetector:
                         "interpolated_aqi": aqi,
                         "category": category,
                         "color_hex": color,
+                        "data_classification": "Spatially estimated",
+                        "spatial_uncertainty": pt.get('spatial_uncertainty', 12.0),
+                        "nearest_station_km": pt.get('nearest_station_km', 2.5),
                         "fill_opacity": 0.35 if aqi >= 301 else 0.22,
                         "stroke_color": color
                     }
@@ -135,6 +141,9 @@ class HotspotDetector:
                 },
                 "properties": {
                     "interpolated_aqi": aqi,
+                    "spatial_uncertainty": pt.get('spatial_uncertainty', 12.0),
+                    "nearest_station_km": pt.get('nearest_station_km', 2.5),
+                    "data_classification": "Spatially estimated",
                     "category": category,
                     "color_hex": color,
                     "is_hotspot": aqi >= HOTSPOT_THRESHOLD
